@@ -45,8 +45,8 @@ The `secure-*` host actions talk **directly** to the SYSTEM helper, bypassing th
 | `job_status` | `id` (omit for the full list), `maxChars 20000` | `running, exitCode, stdout, stderr` (tail) |
 | `job_stop` | `id`* | Kills the process tree |
 | `launch` | `path`*, `args`, `cwd`, `admin`, `waitWindow`, `timeout 20` | `pid, name` — launches a GUI app (detached) |
-| `ps` | `name '*'` (wildcard), `max 200` | `pid, name, title, memMB, cpu` (by memory, descending) |
-| `kill` | `pid` or `name` | `killed` |
+| `ps` | `name '*'` (wildcard), `max 200` | `pid, name, title, memMB, cpu` (by memory, descending), plus `role agent\|launcher\|secure\|system` on the skill's own and critical OS processes |
+| `kill` | `pid` or `name`, `unprotect` | `killed, skipped, notFound`. Kills the process tree. The skill's own processes (agent, launcher, secure helper — all `powershell.exe`) and critical OS processes whose death ends the sandbox session (`CExecSvc`, `csrss`, `wininit`, `winlogon`, `services`, `lsass`, `smss`) are never killed by default and come back in `skipped` with a `role` and `reason`; killing one of their ancestors spares them. `unprotect` lifts this; the agent itself is always skipped (use `restart_agent` / `stop_agent`) |
 | `sleep` | `ms 1000` | |
 
 ### Screen / mouse

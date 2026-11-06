@@ -45,8 +45,8 @@
 | `job_status` | `id`（省略则列出全部）、`maxChars 20000` | `running, exitCode, stdout, stderr`（末尾） |
 | `job_stop` | `id`* | 结束进程树 |
 | `launch` | `path`*、`args`、`cwd`、`admin`、`waitWindow`、`timeout 20` | `pid, name` — 启动 GUI 应用（分离运行） |
-| `ps` | `name '*'`（通配符）、`max 200` | `pid, name, title, memMB, cpu`（按内存降序） |
-| `kill` | `pid` 或 `name` | `killed` |
+| `ps` | `name '*'`（通配符）、`max 200` | `pid, name, title, memMB, cpu`（按内存降序）。技能自身的进程和关键系统进程带 `role agent\|launcher\|secure\|system` |
+| `kill` | `pid` 或 `name`、`unprotect` | `killed, skipped, notFound`。结束整个进程树。技能自身的进程（代理、启动器、secure helper，均为 `powershell.exe`）以及一旦结束就会终止沙盒会话的关键系统进程（`CExecSvc`、`csrss`、`wininit`、`winlogon`、`services`、`lsass`、`smss`）默认不会被结束，而是带 `role`、`reason` 出现在 `skipped` 中；结束它们的父进程时也会保留它们。`unprotect` 可解除保护，但代理本身始终跳过（请用 `restart_agent` / `stop_agent`） |
 | `sleep` | `ms 1000` | |
 
 ### 屏幕 / 鼠标

@@ -97,6 +97,82 @@ function New-ScriptFile([string]$shell, [string]$command, [string]$id) {
 
 function Stop-Tree([int]$procId) { try { & taskkill.exe /T /F /PID $procId 2>&1 | Out-Null } catch {} }
 
+# ---- self-protection: the agent, its launcher and the secure helper are all powershell.exe, so a
+# plain `kill -name powershell` (or a tree kill of one of their ancestors) would take the agent down
+# with no way back short of a reboot. Identify them and keep kill away from them.
+function Get-ProcTable {
+    $t = @{}
+    foreach ($p in @(Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, Name, CommandLine, CreationDate -ErrorAction SilentlyContinue)) {
+        $t[[int]$p.ProcessId] = $p
+    }
+    return $t
+}
+function Get-ParentPid($t, [int]$procId) {
+    $p = $t[$procId]; if (-not $p) { return $null }
+    $ppid = [int]$p.ParentProcessId
+    if ($ppid -eq $procId -or $ppid -eq 0) { return $null }
+    $pp = $t[$ppid]; if (-not $pp) { return $null }
+    if ($pp.CreationDate -and $p.CreationDate -and $pp.CreationDate -gt $p.CreationDate) { return $null }  # parent PID was reused
+    return $ppid
+}
+$CriticalProcs = 'CExecSvc.exe', 'csrss.exe', 'wininit.exe', 'winlogon.exe', 'services.exe', 'lsass.exe', 'smss.exe'
+# pid -> role (agent | launcher | secure) for the skill's own processes, 'system' for critical OS ones.
+function Get-AgentRoles($t) {
+    $roles = @{}
+    foreach ($id in @($t.Keys)) {
+        # Killing these ends the whole sandbox session (CExecSvc is the launcher's parent).
+        if ($id -le 4 -or $t[$id].Name -in $CriticalProcs) { $roles[$id] = 'system'; continue }
+        if ($t[$id].Name -notin 'powershell.exe', 'pwsh.exe') { continue }  # e.g. a cmd /c wrapper that mentions launcher.ps1
+        $cl = [string]$t[$id].CommandLine
+        if ($cl -match '(?i)[\\/]launcher\.ps1') { $roles[$id] = 'launcher' }
+        elseif ($cl -match '(?i)[\\/](secure-agent|secure-broker)\.ps1') { $roles[$id] = 'secure' }
+        elseif ($cl -match '(?i)[\\/]agent\.ps1') { $roles[$id] = 'agent' }
+    }
+    $roles[[int]$PID] = 'agent'
+    # The launcher is the agent's powershell parent even if its command line cannot be read.
+    $pp = Get-ParentPid $t $PID
+    if ($null -ne $pp -and -not $roles.ContainsKey($pp) -and $t[$pp].Name -eq 'powershell.exe') { $roles[$pp] = 'launcher' }
+    # The SYSTEM helper's command line is unreadable at Medium integrity; its heartbeat names its pid.
+    try {
+        $beat = Join-Path $Bridge 'secure\secure.status.json'
+        if (Test-Path $beat) { $hp = [int](([IO.File]::ReadAllText($beat, $Utf8) | ConvertFrom-Json).pid); if ($t.ContainsKey($hp)) { $roles[$hp] = 'secure' } }
+    } catch {}
+    return $roles
+}
+
+function Stop-Guarded([int[]]$targets, [bool]$unprotect) {
+    $t = Get-ProcTable; $roles = Get-AgentRoles $t
+    $protected = @{}
+    foreach ($k in @($roles.Keys)) { if ($k -eq $PID -or -not $unprotect) { $protected[$k] = $roles[$k] } }
+    # Ancestors of a protected process: `taskkill /T` there would kill the protected one too.
+    $anc = @{}
+    foreach ($k in @($protected.Keys)) { $c = Get-ParentPid $t $k; $n = 0; while ($null -ne $c -and $n -lt 64) { $anc[$c] = $true; $c = Get-ParentPid $t $c; $n++ } }
+    $kids = @{}
+    foreach ($id in @($t.Keys)) { $pp = Get-ParentPid $t $id; if ($null -ne $pp) { if (-not $kids.ContainsKey($pp)) { $kids[$pp] = New-Object System.Collections.Generic.List[int] }; $kids[$pp].Add($id) } }
+    $killed = @(); $skipped = @(); $notFound = @()
+    foreach ($id in @($targets | Select-Object -Unique)) {
+        if (-not $t.ContainsKey($id)) { $notFound += $id; continue }
+        if ($protected.ContainsKey($id)) {
+            $why = if ($id -eq $PID) { 'this is the agent itself; use restart_agent or stop_agent' } else { "protected $($protected[$id]) process; pass unprotect=true to kill it anyway" }
+            $skipped += [ordered]@{ pid = $id; name = $t[$id].Name; role = $protected[$id]; reason = $why }; continue
+        }
+        if ($anc.ContainsKey($id)) {
+            # Kill the subtree by hand, without descending into protected branches; leaves first.
+            $order = New-Object System.Collections.Generic.List[int]
+            $stack = New-Object System.Collections.Generic.Stack[int]; $stack.Push($id)
+            while ($stack.Count -gt 0) {
+                $x = $stack.Pop(); $order.Add($x)
+                if ($kids.ContainsKey($x)) { foreach ($c in $kids[$x]) { if (-not $protected.ContainsKey($c)) { $stack.Push($c) } } }
+            }
+            for ($i = $order.Count - 1; $i -ge 0; $i--) { try { Stop-Process -Id $order[$i] -Force -ErrorAction Stop } catch {} }
+        } else { Stop-Tree $id }
+        $killed += $id
+    }
+    $res = [ordered]@{ killed = $killed; skipped = $skipped }
+    if ($notFound.Count) { $res.notFound = $notFound }
+    return $res
+}
+
 function Limit([string]$s, [int]$max) {
     if ($null -eq $s) { return @('', $false) }
     if ($s.Length -le $max) { return @($s, $false) }
@@ -715,14 +791,18 @@ function Invoke-Action($req) {
         'delete' { Remove-Item -LiteralPath ([string](Need $p 'path')) -Recurse -Force; return @{ deleted = $p.path } }
         'ps' {
             $name = [string](P $p 'name' '*')
+            $roles = @{}; try { $roles = Get-AgentRoles (Get-ProcTable) } catch {}
             return @{ processes = @(Get-Process -Name $name -ErrorAction SilentlyContinue | Sort-Object -Property WorkingSet64 -Descending | Select-Object -First ([int](P $p 'max' 200)) | ForEach-Object {
-                [ordered]@{ pid = $_.Id; name = $_.ProcessName; title = $_.MainWindowTitle; memMB = [int]($_.WorkingSet64 / 1MB); cpu = $(try { [math]::Round($_.CPU, 1) } catch { $null }) } }) }
+                $o = [ordered]@{ pid = $_.Id; name = $_.ProcessName; title = $_.MainWindowTitle; memMB = [int]($_.WorkingSet64 / 1MB); cpu = $(try { [math]::Round($_.CPU, 1) } catch { $null }) }
+                if ($roles.ContainsKey($_.Id)) { $o.role = $roles[$_.Id] }
+                $o }) }
         }
         'kill' {
-            $killed = @()
-            if (P $p 'pid') { Stop-Tree ([int]$p.pid); $killed += [int]$p.pid }
-            if (P $p 'name') { foreach ($pr in @(Get-Process -Name ([string]$p.name) -ErrorAction SilentlyContinue)) { Stop-Tree $pr.Id; $killed += $pr.Id } }
-            return @{ killed = $killed }
+            if (-not ((P $p 'pid') -or (P $p 'name'))) { throw "Specify pid or name" }
+            $targets = @()
+            if (P $p 'pid') { $targets += [int]$p.pid }
+            if (P $p 'name') { $targets += @(Get-Process -Name ([string]$p.name) -ErrorAction SilentlyContinue | ForEach-Object { $_.Id }) }
+            return (Stop-Guarded $targets (B (P $p 'unprotect' $false)))
         }
         'sleep' { Start-Sleep -Milliseconds ([int](P $p 'ms' 1000)); return @{ ok = $true } }
         'restart_agent' { $script:ExitCode = 0; return @{ restarting = $true } }

@@ -45,8 +45,8 @@
 | `job_status` | `id`(省略時は一覧)、`maxChars 20000` | `running, exitCode, stdout, stderr`(末尾) |
 | `job_stop` | `id`* | プロセスツリーを終了 |
 | `launch` | `path`*、`args`、`cwd`、`admin`、`waitWindow`、`timeout 20` | `pid, name` — GUI アプリを起動(切り離し) |
-| `ps` | `name '*'`(ワイルドカード)、`max 200` | `pid, name, title, memMB, cpu`(メモリの降順) |
-| `kill` | `pid` または `name` | `killed` |
+| `ps` | `name '*'`(ワイルドカード)、`max 200` | `pid, name, title, memMB, cpu`(メモリの降順)。スキル自身のプロセスと重要な OS プロセスには `role agent\|launcher\|secure\|system` を付与 |
+| `kill` | `pid` または `name`、`unprotect` | `killed, skipped, notFound`。プロセスツリーごと終了。スキル自身のプロセス(エージェント・ランチャー・secure helper。すべて `powershell.exe`)と、終了するとサンドボックスのセッションが終わる重要な OS プロセス(`CExecSvc`、`csrss`、`wininit`、`winlogon`、`services`、`lsass`、`smss`)は既定では終了せず、`role`・`reason` 付きで `skipped` に返す。これらの親プロセスを終了してもこれらは残す。`unprotect` で保護を外せるが、エージェント自身は常にスキップ(`restart_agent` / `stop_agent` を使う) |
 | `sleep` | `ms 1000` | |
 
 ### 画面 / マウス

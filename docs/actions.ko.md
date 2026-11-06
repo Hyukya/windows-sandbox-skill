@@ -45,8 +45,8 @@
 | `job_status` | `id`(없으면 전체 목록), `maxChars 20000` | `running, exitCode, stdout, stderr`(꼬리) |
 | `job_stop` | `id`* | 프로세스 트리 종료 |
 | `launch` | `path`*, `args`, `cwd`, `admin`, `waitWindow`, `timeout 20` | `pid, name` — GUI 앱 실행(분리) |
-| `ps` | `name '*'`(와일드카드), `max 200` | `pid, name, title, memMB, cpu` (메모리 내림차순) |
-| `kill` | `pid` 또는 `name` | `killed` |
+| `ps` | `name '*'`(와일드카드), `max 200` | `pid, name, title, memMB, cpu` (메모리 내림차순). 스킬 자체 프로세스와 핵심 OS 프로세스에는 `role agent\|launcher\|secure\|system` 표시 |
+| `kill` | `pid` 또는 `name`, `unprotect` | `killed, skipped, notFound`. 프로세스 트리째 종료. 스킬 자체 프로세스(에이전트·런처·secure helper, 모두 `powershell.exe`)와 죽으면 샌드박스 세션이 끝나는 핵심 OS 프로세스(`CExecSvc`, `csrss`, `wininit`, `winlogon`, `services`, `lsass`, `smss`)는 기본적으로 종료하지 않고 `role`·`reason`과 함께 `skipped`로 돌려줌. 이들의 상위 프로세스를 종료해도 이들은 남김. `unprotect`를 주면 보호를 해제하지만 에이전트 자신은 항상 건너뜀(`restart_agent` / `stop_agent` 사용) |
 | `sleep` | `ms 1000` | |
 
 ### 화면/마우스
