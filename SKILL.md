@@ -1,6 +1,6 @@
 ---
 name: windows-sandbox
-description: Control Windows Sandbox (the disposable Windows VM built into Windows 10/11 Pro) from the host — start/stop it, run PowerShell/cmd commands with captured output and exit codes, take screenshots, drive the mouse and keyboard (click, drag, scroll, type Unicode/CJK text, hotkeys), find/focus/close windows, use UI Automation to inspect and click controls, copy files in and out, use the clipboard, and manage processes and background jobs. Use this skill whenever the user wants to do anything inside Windows Sandbox or a throwaway Windows VM — testing an installer or untrusted exe, reproducing a bug on a clean Windows, GUI automation in isolation, "run this in the sandbox", "test on a clean Windows", "샌드박스에서 실행해줘", "윈도우 샌드박스 제어", "サンドボックスで実行して", "在沙盒里运行" — even if they don't say "skill".
+description: Control Windows Sandbox (the disposable Windows VM built into Windows 10/11 Pro) from the host — start/stop it, run a host file (exe/msi/ps1/bat/zip/iso/URL) in it in one step, run PowerShell/cmd commands with captured output and exit codes, take screenshots, drive the mouse and keyboard (click, drag, scroll, type Unicode/CJK text, hotkeys), find/focus/close windows, use UI Automation to inspect and click controls, copy files in and out, use the clipboard, and manage processes and background jobs. Use this skill whenever the user wants to do anything inside Windows Sandbox or a throwaway Windows VM — testing an installer or untrusted exe, reproducing a bug on a clean Windows, GUI automation in isolation, "run this in the sandbox", "test on a clean Windows", "샌드박스에서 실행해줘", "윈도우 샌드박스 제어", "サンドボックスで実行して", "在沙盒里运行" — even if they don't say "skill".
 ---
 
 # Windows Sandbox control
@@ -24,6 +24,7 @@ $SBX <action> -name value -flag ...
 
 - Output is always a single JSON object: `{"ok":true,"result":{...}}` on success, `{"ok":false,"error":"..."}` on failure, and the process exits with code 1 on failure.
 - **Call it from the Bash tool.** When PowerShell 5.1 invokes a native exe, double quotes inside arguments get mangled. For complex commands or long text, the safest route is to write them to a file and pass `-commandFile` / `-textFile` / `-valueFile`.
+- Git Bash rewrites arguments that start with `/` (such as `/user` or `/qn`) into paths like `C:/Program Files/Git/user`. Set `MSYS_NO_PATHCONV=1` when passing such arguments.
 - Value syntax: `-x 100`, `-name=value`, or a bare switch (`-double`). Negative numbers (`-clicks -3`) and string values starting with `-` (`-args '-NoProfile -File x.ps1'`) work too.
 - To pass arbitrary parameters, use `-paramsJson '{"x":1}'` or `-paramsFile p.json`.
 
@@ -34,6 +35,40 @@ $SBX <action> -name value -flag ...
    - Only one sandbox can run at a time. If another sandbox window is open, start fails; close it or run `$SBX stop -kill`.
 2. **Observe, act, re-observe loop**: when driving a GUI, take a `screenshot` → view the returned `hostPath` image with the Read tool → run `click`/`type`/`keys` → take another `screenshot` to confirm the result. Input is only guaranteed to have been *sent*, not to have done what you intended, so do not move on without checking.
 3. **Shut down**: run `$SBX stop`. It shuts down from inside the sandbox and force-kills it if that fails. **The sandbox is disposable.** Closing it wipes all state inside, so `pull` out anything you want to keep first.
+
+## Running a host file directly (`run`)
+
+When the user asks to run a file that is on the host ("run this exe in the sandbox"), use `run`. It boots the sandbox if needed (and accepts the `start` options), copies the file to the sandbox desktop, and runs it the right way for its type.
+
+```bash
+$SBX run -path ./setup.exe                          # launch as a GUI and return right away (pid); then watch with screenshot
+$SBX run -path ./setup.msi -silent -wait -timeout 900  # unattended install (/qn), wait and return exitCode
+$SBX run -path ./build.ps1 -args '-Config Release' -wait   # capture console output (stdout/stderr) and exit code
+$SBX run -path ./bin/app.exe -withFolder -screenshot  # copy the whole folder (sibling DLLs/configs), screenshot after 3 s
+$SBX run -path ./tool.zip -entry 'tool\run.cmd' -wait  # unzip and run a file inside (without -entry: open in Explorer)
+$SBX run -path https://example.com                    # open in Edge
+$SBX run -sandboxPath 'C:\Users\WDAGUtilityAccount\Desktop\proj\app.exe'  # a file already inside (e.g. via -map)
+```
+
+| Type | How it runs |
+|---|---|
+| `.exe .com .scr` | Directly (`-args` passed through) |
+| `.msi` / `.msp` | `msiexec /i` / `/p`; `-silent` adds `/qn /norestart` |
+| `.ps1` | `powershell -ExecutionPolicy Bypass -File` (in launch mode, `-NoExit` keeps the window open) |
+| `.bat .cmd` | `cmd /c` (`-wait`) or `cmd /k` |
+| `.js .jse .wsf .vbs .vbe` | `cscript` (`-wait`) or `wscript`. **The sandbox image has no VBScript engine, so `.vbs` may fail** |
+| `.reg` | `reg import` (always waits) |
+| `.msix .appx` family | `Add-AppxPackage` (always waits; may not launch because of the Store-app limitation) |
+| `.zip` | Extract to a folder of the same name → run `-entry` or open in Explorer |
+| `.iso` | Mount → run `-entry` or open the drive in Explorer |
+| Folder / other files | Open in Explorer (other files open with their default program) |
+| `http(s)://` | Edge |
+
+- **Two modes**: the default is `launch` mode. It starts the program and returns at once, so you observe and drive the screen afterwards. With `-wait`, it waits until the program (including child processes) exits and returns `exec.exitCode/stdout/stderr`. Past `-timeout` (default 600 s) the process tree is killed. A GUI app with `-wait` does not return until its window is closed.
+- `ok:true` means "it was run". Judge the program's success from `exec.exitCode` (for msi, 3010 = reboot required also counts as success).
+- `-as <type>` overrides detection (e.g. `-as open` opens even an exe via its file association). `-dst` changes where the file is copied; `-noStart` fails instead of booting when the sandbox is off; `-bootTimeout` sets the boot wait.
+- Running the same file again overwrites it (a folder is deleted and copied fresh). For multi-GB folders, map them with `start -map "D:\proj;ro"` and use `-sandboxPath` instead of copying.
+- **VHD/VHDX is not supported.** Mounting a virtual disk inside the sandbox can crash the sandbox VM with `0x80370106`.
 
 ## Choosing what to use (most reliable first)
 

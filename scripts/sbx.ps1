@@ -1,6 +1,6 @@
 # Host-side controller for Windows Sandbox.
 # Usage: powershell -NoProfile -ExecutionPolicy Bypass -File sbx.ps1 <action> [-name value]... [-flag]
-# Host actions : check, start, stop, status, push, pull, update-agent, logs, call
+# Host actions : check, start, stop, status, run, push, pull, update-agent, logs, call
 # Agent actions: anything else is forwarded to the in-sandbox agent (see references/actions.md)
 # Output: one JSON object on stdout. Exit code 0 = ok, 1 = error.
 
@@ -57,7 +57,7 @@ if ($Params.Contains('paramsFile')) { ([IO.File]::ReadAllText($Params.paramsFile
 foreach ($k in @($Params.Keys)) {
     if ($k -in 'textFile', 'commandFile', 'valueFile') { $Params[$k -replace 'File$', ''] = [IO.File]::ReadAllText([string]$Params[$k], $Utf8); $Params.Remove($k) }
 }
-$StringKeys = 'text', 'command', 'value', 'title', 'name', 'keys', 'path', 'src', 'dst', 'cwd', 'id', 'process', 'class', 'type', 'args', 'modifiers'
+$StringKeys = 'text', 'command', 'value', 'title', 'name', 'keys', 'path', 'src', 'dst', 'cwd', 'id', 'process', 'class', 'type', 'args', 'modifiers', 'sandboxPath', 'entry', 'as'
 foreach ($k in @($Params.Keys)) { if ($k -notin $StringKeys) { $Params[$k] = Convert-Value $Params[$k] } }
 
 function Get-Param([string]$name, $default = $null) { if ($Params.Contains($name)) { return $Params[$name] }; return $default }
@@ -153,10 +153,204 @@ $($maps.ToString().TrimEnd())
 "@
 }
 
+function Start-Sandbox([double]$timeout = 240) {
+    # returns an ordered result (alreadyRunning or started+info); calls Fail on error
+    if (-not (Test-Path (Join-Path $env:windir 'System32\WindowsSandbox.exe'))) { Fail 'Windows Sandbox is not installed. Run: sbx.ps1 check' }
+    if (Test-AgentAlive) { return [ordered]@{ ok = $true; alreadyRunning = $true; status = (Get-Status) } }
+    if (@(Get-SandboxProcs | Where-Object { $_.ProcessName -eq 'WindowsSandboxRemoteSession' -or $_.ProcessName -eq 'WindowsSandbox' }).Count -gt 0 -and -not (Get-Param 'force' $false)) {
+        Fail 'A Windows Sandbox instance is already running without the agent (only one instance is allowed). Close it, or run: sbx.ps1 stop -kill' @{ processes = @(Get-SandboxProcs | ForEach-Object { $_.ProcessName }) }
+    }
+    Initialize-Bridge
+    foreach ($d in 'inbox', 'outbox') { Get-ChildItem (Join-Path $Bridge $d) -File -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue }
+    Remove-Item $StatusFile -Force -ErrorAction SilentlyContinue
+    $wsb = Join-Path $Bridge 'sandbox.wsb'
+    [IO.File]::WriteAllText($wsb, (New-WsbConfig), $Utf8)
+    Start-Process -FilePath (Join-Path $env:windir 'System32\WindowsSandbox.exe') -ArgumentList "`"$wsb`""
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    while ($sw.Elapsed.TotalSeconds -lt $timeout) {
+        if (Test-AgentAlive) {
+            Start-Sleep -Milliseconds 500
+            $info = (Send-Request 'info' ([ordered]@{}) 30).result
+            return [ordered]@{ ok = $true; started = $true; bootSeconds = [math]::Round($sw.Elapsed.TotalSeconds, 1); config = $wsb; info = $info }
+        }
+        Start-Sleep -Seconds 1
+    }
+    Fail "Sandbox did not report an agent heartbeat within $timeout s. Check that the sandbox window opened and look at $Bridge\logs." @{ config = $wsb; processes = @(Get-SandboxProcs | ForEach-Object { $_.ProcessName }) }
+}
+
+function Push-Item([string]$src, [string]$dst) {
+    # copy a host file/folder to an exact sandbox path via the bridge; returns the agent response
+    $stage = 'push_' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+    $stageDir = Join-Path $Bridge "files\$stage"; New-Item -ItemType Directory -Force $stageDir | Out-Null
+    try {
+        Copy-Item -LiteralPath $src -Destination $stageDir -Recurse -Force
+        $leaf = Split-Path -Leaf $src
+        return (Send-Request 'copy' ([ordered]@{ src = "bridge:files/$stage/$leaf"; dst = $dst }) 900)
+    } finally { Remove-Item -LiteralPath $stageDir -Recurse -Force -ErrorAction SilentlyContinue }
+}
+
+function Invoke-Agent([string]$action, $params, [string]$step) {
+    # agent call that aborts the whole host action on failure
+    $r = Send-Request $action $params
+    if (-not $r.ok) { Fail "run: $step failed: $($r.error)" @{ step = $step; response = $r } }
+    if ($action -eq 'exec' -and $step -ne 'exec' -and ($r.result.exitCode -ne 0 -or $r.result.timedOut)) {
+        # helper steps (probe/unzip/mount) must succeed; the user's own program may return any code
+        Fail "run: $step failed (exit $($r.result.exitCode)): $(([string]$r.result.stderr).Trim())" @{ step = $step; result = $r.result }
+    }
+    return $r.result
+}
+
+function Get-RunKind([string]$p, [bool]$isDir) {
+    if ($p -match '^(https?|ftp)://') { return 'url' }
+    if ($isDir) { return 'folder' }
+    switch ([IO.Path]::GetExtension($p).ToLowerInvariant()) {
+        { $_ -in '.exe', '.com', '.scr' } { return 'exe' }
+        '.msi' { return 'msi' }
+        '.msp' { return 'msp' }
+        '.ps1' { return 'ps1' }
+        { $_ -in '.bat', '.cmd' } { return 'cmd' }
+        { $_ -in '.vbs', '.vbe', '.js', '.jse', '.wsf' } { return 'wsh' }
+        '.reg' { return 'reg' }
+        { $_ -in '.msix', '.msixbundle', '.appx', '.appxbundle' } { return 'appx' }
+        '.zip' { return 'zip' }
+        '.iso' { return 'disk' }
+        { $_ -in '.vhd', '.vhdx' } { return 'vhd' }
+        default { return 'open' }
+    }
+}
+
+function Get-RunSpec([string]$kind, [string]$f, [string]$a, [bool]$wait, [bool]$silent) {
+    # -> @{ file; args; mode = any|wait|launch }   (args is a raw command-line string)
+    $q = '"' + $f + '"'
+    $tail = if ($a) { ' ' + $a } else { '' }
+    switch ($kind) {
+        'exe' { return @{ file = $f; args = $a; mode = 'any' } }
+        'msi' { return @{ file = 'msiexec.exe'; args = "/i $q" + $(if ($silent) { ' /qn /norestart' }) + $tail; mode = 'any' } }
+        'msp' { return @{ file = 'msiexec.exe'; args = "/p $q" + $(if ($silent) { ' /qn /norestart' }) + $tail; mode = 'any' } }
+        'ps1' { return @{ file = 'powershell.exe'; args = '-NoProfile -ExecutionPolicy Bypass' + $(if (-not $wait) { ' -NoExit' }) + " -File $q$tail"; mode = 'any' } }
+        'cmd' { return @{ file = 'cmd.exe'; args = $(if ($wait) { '/c' } else { '/k' }) + " `"$q$tail`""; mode = 'any' } }
+        'wsh' { if ($wait) { return @{ file = 'cscript.exe'; args = "//NoLogo $q$tail"; mode = 'any' } }; return @{ file = 'wscript.exe'; args = "$q$tail"; mode = 'any' } }
+        'reg' { return @{ file = 'reg.exe'; args = "import $q"; mode = 'wait' } }
+        'appx' { return @{ file = 'powershell.exe'; args = "-NoProfile -ExecutionPolicy Bypass -Command `"Add-AppxPackage -Path '$($f -replace "'", "''")'`""; mode = 'wait' } }
+        'url' { return @{ file = 'msedge.exe'; args = "$q$tail"; mode = 'launch' } }
+        default { return @{ file = 'explorer.exe'; args = $q; mode = 'launch' } }   # folder / open (default file association)
+    }
+}
+
+function PsQuote([string]$s) { return "'" + ($s -replace "'", "''") + "'" }
+
+function Invoke-Run {
+    # run -path <host file|folder|URL> | -sandboxPath <path already in sandbox>
+    #     [-args "..."] [-wait] [-timeout 600] [-silent] [-withFolder] [-dst <sandbox dir>] [-entry <file in zip/iso>]
+    #     [-as kind] [-waitWindow] [-screenshot] [-settle 3] [-noStart] [-bootTimeout 240] (+ start options when it boots)
+    $hostPath = [string](Get-Param 'path' ''); $sbPath = [string](Get-Param 'sandboxPath' '')
+    if (-not $hostPath -and -not $sbPath) { Fail 'run needs -path <host file|folder|URL> or -sandboxPath <path inside sandbox>' }
+    $argStr = [string](Get-Param 'args' ''); $wait = [bool](Get-Param 'wait' $false); $silent = [bool](Get-Param 'silent' $false)
+    $isUrl = $hostPath -match '^(https?|ftp)://'
+    $out = [ordered]@{ ok = $true }
+
+    $isDir = $false
+    if ($hostPath -and -not $isUrl) {
+        if (-not (Test-Path -LiteralPath $hostPath)) { Fail "run: host path not found: $hostPath" }
+        $hostPath = (Resolve-Path -LiteralPath $hostPath).Path
+        $isDir = Test-Path -LiteralPath $hostPath -PathType Container
+        $out.hostPath = $hostPath
+    }
+
+    if (-not (Get-Param 'as' '') -and ($hostPath + $sbPath) -match '\.vhdx?$') { Fail 'run: VHD/VHDX is not supported - mounting a virtual disk inside Windows Sandbox can crash the sandbox VM (0x80370106).' }
+    if (-not (Test-AgentAlive)) {
+        if (Get-Param 'noStart' $false) { Fail 'Sandbox agent is not running and -noStart was given. Run: sbx.ps1 start' }
+        $out.boot = Start-Sandbox ([double](Get-Param 'bootTimeout' 240))
+    }
+
+    # 1. get the target into the sandbox
+    $target = if ($isUrl) { $hostPath } elseif ($sbPath) { $sbPath } else { $null }
+    if (-not $target) {
+        $dstDir = ([string](Get-Param 'dst' 'C:\Users\WDAGUtilityAccount\Desktop')).TrimEnd('\')
+        $copySrc = $hostPath
+        if ((Get-Param 'withFolder' $false) -and -not $isDir) { $copySrc = [IO.Path]::GetDirectoryName($hostPath) }   # bring sibling DLLs/configs along
+        $copyDst = [IO.Path]::Combine($dstDir, [IO.Path]::GetFileName($copySrc))
+        if (Test-Path -LiteralPath $copySrc -PathType Container) { Send-Request 'delete' ([ordered]@{ path = $copyDst }) | Out-Null }   # avoid nesting on re-run
+        $r = Push-Item $copySrc $copyDst
+        if (-not $r.ok) { Fail "run: copy into sandbox failed: $($r.error)" @{ step = 'copy'; response = $r } }
+        $target = if ($copySrc -ne $hostPath) { [IO.Path]::Combine($copyDst, [IO.Path]::GetFileName($hostPath)) } else { $copyDst }
+    }
+    $out.sandboxPath = $target
+
+    # 2. pick a runner
+    $kind = [string](Get-Param 'as' '')
+    if (-not $kind) {
+        $sbIsDir = $isDir
+        if ($sbPath -and -not $hostPath) { $sbIsDir = [bool](Invoke-Agent 'exec' ([ordered]@{ command = "if (Test-Path -LiteralPath $(PsQuote $target) -PathType Container) { 'D' } else { 'F' }"; timeout = 30 }) 'probe').stdout.Trim().Equals('D') }
+        $kind = Get-RunKind $target $sbIsDir
+    }
+    $entry = [string](Get-Param 'entry' '')
+    if ($kind -in 'zip', 'disk') {
+        if ($kind -eq 'zip') {
+            $root = [IO.Path]::Combine([IO.Path]::GetDirectoryName($target), [IO.Path]::GetFileNameWithoutExtension($target))
+            $null = Invoke-Agent 'exec' ([ordered]@{ command = "Expand-Archive -LiteralPath $(PsQuote $target) -DestinationPath $(PsQuote $root) -Force"; timeout = 600 }) 'unzip'
+            $out.extractedTo = $root
+        } else {
+            # ISO only (VHD is refused above). The partition branch is kept as a fallback for odd images.
+            $cmd = (@'
+$img = __IMG__
+if (-not (Get-DiskImage -ImagePath $img).Attached) { Mount-DiskImage -ImagePath $img | Out-Null }
+$di = Get-DiskImage -ImagePath $img; $letter = $null
+for ($k = 0; $k -lt 30 -and -not $letter; $k++) {
+    if ($di.StorageType -eq 1) { $letter = ($di | Get-Volume -ErrorAction SilentlyContinue | Where-Object DriveLetter | Select-Object -First 1).DriveLetter }
+    else {
+        $parts = @(Get-Disk -Number $di.Number -ErrorAction SilentlyContinue | Get-Partition -ErrorAction SilentlyContinue | Where-Object { $_.Type -notin 'Reserved', 'System', 'Recovery' })
+        $letter = ($parts | Where-Object DriveLetter | Select-Object -First 1).DriveLetter
+        if (-not $letter -and $parts.Count) { $parts | Sort-Object Size -Descending | Select-Object -First 1 | Add-PartitionAccessPath -AssignDriveLetter -ErrorAction SilentlyContinue }
+    }
+    if (-not $letter) { Start-Sleep -Milliseconds 500; $di = Get-DiskImage -ImagePath $img }
+}
+if (-not $letter) { throw 'image mounted but no drive letter appeared' }
+"$($letter):\"
+'@).Replace('__IMG__', (PsQuote $target))
+            $root = (Invoke-Agent 'exec' ([ordered]@{ command = $cmd; timeout = 120 }) 'mount').stdout.Trim()
+            $out.mountedAt = $root
+        }
+        if ($entry) { $target = [IO.Path]::Combine($root, $entry); $kind = Get-RunKind $target $false; $out.sandboxPath = $target }
+        else { $target = $root; $kind = 'folder' }
+    }
+    $out.kind = $kind
+    if ($kind -eq 'vhd') { Fail 'run: VHD/VHDX is not supported - mounting a virtual disk inside Windows Sandbox can crash the sandbox VM (0x80370106). Extract the files on the host and run them instead.' }
+
+    # 3. run it
+    $spec = Get-RunSpec $kind $target $argStr $wait $silent
+    $mode = if ($spec.mode -ne 'any') { $spec.mode } elseif ($wait) { 'wait' } else { 'launch' }
+    $cwd = if ($kind -in 'url', 'folder') { 'C:\Users\WDAGUtilityAccount' } else { [IO.Path]::GetDirectoryName($target) }
+    $out.mode = $mode; $out.command = [ordered]@{ file = $spec.file; args = $spec.args; cwd = $cwd }
+    if ($mode -eq 'wait') {
+        # Start-Process -Wait waits for child processes too (installers), and the redirect captures console output
+        $ps = "`$o = Join-Path `$env:TEMP ('run_' + [guid]::NewGuid().ToString('N')); `$e = `$o + '.err'`r`n" +
+              "`$sp = @{ FilePath = $(PsQuote $spec.file); WorkingDirectory = $(PsQuote $cwd); Wait = `$true; PassThru = `$true; NoNewWindow = `$true; RedirectStandardOutput = `$o; RedirectStandardError = `$e }`r`n" +
+              $(if ($spec.args) { "`$sp.ArgumentList = $(PsQuote $spec.args)`r`n" } else { '' }) +
+              "`$p = Start-Process @sp`r`n" +
+              "foreach (`$x in @(@(`$o, [Console]::Out), @(`$e, [Console]::Error))) { if (Test-Path `$x[0]) { `$x[1].Write([IO.File]::ReadAllText(`$x[0], [Text.Encoding]::Default)); Remove-Item `$x[0] -Force } }`r`n" +
+              "exit `$p.ExitCode"
+        $out.exec = Invoke-Agent 'exec' ([ordered]@{ command = $ps; timeout = [int](Get-Param 'timeout' 600); cwd = $cwd }) 'exec'
+    } else {
+        $lp = [ordered]@{ path = $spec.file; cwd = $cwd }
+        if ($spec.args) { $lp.args = $spec.args }
+        if (Get-Param 'waitWindow' $false) { $lp.waitWindow = $true; $lp.timeout = [int](Get-Param 'timeout' 20) }
+        $out.launch = Invoke-Agent 'launch' $lp 'launch'
+    }
+
+    # 4. optional look at the result
+    if (Get-Param 'screenshot' $false) {
+        if ($mode -eq 'launch') { Start-Sleep -Milliseconds ([int]([double](Get-Param 'settle' 3) * 1000)) }
+        $s = Add-HostPaths (Send-Request 'screenshot' ([ordered]@{ name = "run_$(Get-Date -Format 'HHmmss').png" }))
+        $out.screenshot = if ($s.ok) { $s.result } else { [ordered]@{ error = $s.error } }
+    }
+    Out-Json $out
+}
+
 # ---------------------------------------------------------------- host actions
 switch ($Action.ToLowerInvariant()) {
     'help' {
-        Out-Json ([ordered]@{ ok = $true; usage = 'sbx.ps1 <action> [-param value]...'; hostActions = 'check start stop status push pull update-agent logs call'
+        Out-Json ([ordered]@{ ok = $true; usage = 'sbx.ps1 <action> [-param value]...'; hostActions = 'check start stop status run push pull update-agent logs call'
             agentActions = 'ping info exec job_start job_status job_stop launch screen screenshot cursor move click mouse_down mouse_up drag scroll type keys key_down key_up windows window wait_window foreground ui_tree ui_find ui_invoke ui_set_value clipboard_get clipboard_set ls read_text write_text copy delete ps kill sleep restart_agent stop_agent shutdown'
             reference = (Join-Path $SkillDir 'references\actions.md') })
     }
@@ -177,30 +371,8 @@ switch ($Action.ToLowerInvariant()) {
         $s = Get-Status
         Out-Json ([ordered]@{ ok = $true; agentAlive = (Test-AgentAlive); status = $s; sandboxProcesses = @(Get-SandboxProcs | ForEach-Object { $_.ProcessName }); bridge = $Bridge })
     }
-    'start' {
-        if (-not (Test-Path (Join-Path $env:windir 'System32\WindowsSandbox.exe'))) { Fail 'Windows Sandbox is not installed. Run: sbx.ps1 check' }
-        if (Test-AgentAlive) { Out-Json ([ordered]@{ ok = $true; alreadyRunning = $true; status = (Get-Status) }) }
-        if (@(Get-SandboxProcs | Where-Object { $_.ProcessName -eq 'WindowsSandboxRemoteSession' -or $_.ProcessName -eq 'WindowsSandbox' }).Count -gt 0 -and -not (Get-Param 'force' $false)) {
-            Fail 'A Windows Sandbox instance is already running without the agent (only one instance is allowed). Close it, or run: sbx.ps1 stop -kill' @{ processes = @(Get-SandboxProcs | ForEach-Object { $_.ProcessName }) }
-        }
-        Initialize-Bridge
-        foreach ($d in 'inbox', 'outbox') { Get-ChildItem (Join-Path $Bridge $d) -File -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue }
-        Remove-Item $StatusFile -Force -ErrorAction SilentlyContinue
-        $wsb = Join-Path $Bridge 'sandbox.wsb'
-        [IO.File]::WriteAllText($wsb, (New-WsbConfig), $Utf8)
-        Start-Process -FilePath (Join-Path $env:windir 'System32\WindowsSandbox.exe') -ArgumentList "`"$wsb`""
-        $timeout = [double](Get-Param 'timeout' 240)
-        $sw = [Diagnostics.Stopwatch]::StartNew()
-        while ($sw.Elapsed.TotalSeconds -lt $timeout) {
-            if (Test-AgentAlive) {
-                Start-Sleep -Milliseconds 500
-                $info = (Send-Request 'info' ([ordered]@{}) 30).result
-                Out-Json ([ordered]@{ ok = $true; started = $true; bootSeconds = [math]::Round($sw.Elapsed.TotalSeconds, 1); config = $wsb; info = $info })
-            }
-            Start-Sleep -Seconds 1
-        }
-        Fail "Sandbox did not report an agent heartbeat within $timeout s. Check that the sandbox window opened and look at $Bridge\logs." @{ config = $wsb; processes = @(Get-SandboxProcs | ForEach-Object { $_.ProcessName }) }
-    }
+    'start' { Out-Json (Start-Sandbox ([double](Get-Param 'timeout' 240))) }
+    'run' { Invoke-Run }
     'stop' {
         $how = 'none'
         if ((Test-AgentAlive) -and -not (Get-Param 'kill' $false)) {
@@ -231,12 +403,7 @@ switch ($Action.ToLowerInvariant()) {
         # push -src <host path> -dst <sandbox path>
         $src = [string](Get-Param 'src'); $dst = [string](Get-Param 'dst')
         if (-not $src -or -not $dst) { Fail 'push needs -src <host path> -dst <sandbox path>' }
-        $stage = 'push_' + [guid]::NewGuid().ToString('N').Substring(0, 8)
-        $stageDir = Join-Path $Bridge "files\$stage"; New-Item -ItemType Directory -Force $stageDir | Out-Null
-        Copy-Item -LiteralPath $src -Destination $stageDir -Recurse -Force
-        $leaf = Split-Path -Leaf $src
-        $r = Send-Request 'copy' ([ordered]@{ src = "bridge:files/$stage/$leaf"; dst = $dst })
-        Remove-Item -LiteralPath $stageDir -Recurse -Force -ErrorAction SilentlyContinue
+        $r = Push-Item $src $dst
         if ($r.ok) { Out-Json ([ordered]@{ ok = $true; src = $src; dst = $r.result.dst }) } else { Out-Json $r 1 }
     }
     'pull' {

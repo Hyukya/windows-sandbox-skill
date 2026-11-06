@@ -17,6 +17,7 @@ Host-only options: `-wait <seconds>` (how long to wait for a response, default m
 | `status` | | Heartbeat (`ageSeconds`), sandbox processes |
 | `logs` | `-lines 40` | Tail of agent.log / launcher.log |
 | `update-agent` | | Copies `scripts/agent/*` to the bridge and restarts the agent |
+| `run` | `-path hostFile\|folder\|URL` or `-sandboxPath`, `-args`, `-wait`, `-timeout 600`, `-silent` (msi), `-withFolder`, `-entry` (file inside zip/iso), `-dst sandboxDir (Desktop)`, `-as type`, `-waitWindow`, `-screenshot`, `-settle 3`, `-noStart`, `-bootTimeout 240` + `start` options | Boots if needed → copies → runs by type. Result: `kind, mode(wait\|launch), sandboxPath, command, exec{exitCode,stdout,stderr}` or `launch{pid}`, `extractedTo/mountedAt`, `screenshot`, `boot`. See SKILL.md for the type table |
 | `push` | `-src hostPath -dst sandboxPath` | Copies a file/folder into the sandbox |
 | `pull` | `-src sandboxPath -dst hostPath` | Copies a file/folder to the host |
 | `call` | `call <action> -paramsJson ...` | Calls an arbitrary agent action |

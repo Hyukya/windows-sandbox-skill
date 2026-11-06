@@ -17,6 +17,7 @@
 | `status` | | ハートビート(`ageSeconds`)、サンドボックスのプロセス |
 | `logs` | `-lines 40` | agent.log / launcher.log の末尾 |
 | `update-agent` | | `scripts/agent/*` をブリッジにコピーしてエージェントを再起動 |
+| `run` | `-path ホストのファイル\|フォルダー\|URL` または `-sandboxPath`、`-args`、`-wait`、`-timeout 600`、`-silent`(msi)、`-withFolder`、`-entry`(zip/iso 内のファイル)、`-dst サンドボックスのフォルダー(デスクトップ)`、`-as 種類`、`-waitWindow`、`-screenshot`、`-settle 3`、`-noStart`、`-bootTimeout 240` + `start` のオプション | 必要なら起動 → コピー → 種類に応じて実行。結果: `kind, mode(wait\|launch), sandboxPath, command, exec{exitCode,stdout,stderr}` または `launch{pid}`、`extractedTo/mountedAt`、`screenshot`、`boot`。種類の表は SKILL.md を参照 |
 | `push` | `-src ホストのパス -dst サンドボックスのパス` | ファイル/フォルダーをサンドボックスへコピー |
 | `pull` | `-src サンドボックスのパス -dst ホストのパス` | ファイル/フォルダーをホストへコピー |
 | `call` | `call <action> -paramsJson ...` | 任意のエージェントアクションを呼び出す |

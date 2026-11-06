@@ -13,6 +13,7 @@ host: sbx.ps1 ──JSON──▶ %USERPROFILE%\WinSandboxBridge ═(mapped fold
 | Area | Actions |
 |---|---|
 | Lifecycle | `check` `start` `stop` `status` `logs` `update-agent` (reload the agent without rebooting) |
+| Run host files | `run` — copy a host file/folder/URL in and run it by type (exe, msi, ps1, bat/cmd, js, reg, zip, iso, folder, URL), booting the sandbox if needed |
 | Commands | `exec` (PowerShell/cmd with stdout, stderr, exit code, timeout), `job_start` / `job_status` / `job_stop`, `launch`, `ps`, `kill` |
 | Screen | `screenshot` (full screen, region or window; scaling; cursor marker), `screen`, `cursor` |
 | Mouse | `move` `click` (left/right/middle/double/with modifiers) `drag` `scroll` `mouse_down` `mouse_up` |
@@ -53,6 +54,7 @@ $SBX keys -keys 'win+r'; $SBX type -text 'cmd'; $SBX keys -keys enter
 $SBX screenshot                              # PNG path in result.hostPath
 $SBX click -x 640 -y 400
 $SBX push -src ./setup.exe -dst 'C:\Users\WDAGUtilityAccount\Desktop\setup.exe'
+$SBX run -path ./setup.msi -silent -wait       # copy a host file in and run it (boots the sandbox if needed)
 $SBX stop
 ```
 

@@ -17,6 +17,7 @@
 | `status` | | 心跳（`ageSeconds`）、沙盒进程 |
 | `logs` | `-lines 40` | agent.log / launcher.log 的末尾 |
 | `update-agent` | | 把 `scripts/agent/*` 复制到桥接文件夹并重启代理 |
+| `run` | `-path 主机文件\|文件夹\|URL` 或 `-sandboxPath`、`-args`、`-wait`、`-timeout 600`、`-silent`(msi)、`-withFolder`、`-entry`(zip/iso 内的文件)、`-dst 沙盒文件夹(桌面)`、`-as 类型`、`-waitWindow`、`-screenshot`、`-settle 3`、`-noStart`、`-bootTimeout 240` + `start` 选项 | 必要时启动 → 复制 → 按类型运行。结果: `kind, mode(wait\|launch), sandboxPath, command, exec{exitCode,stdout,stderr}` 或 `launch{pid}`、`extractedTo/mountedAt`、`screenshot`、`boot`。类型表见 SKILL.md |
 | `push` | `-src 主机路径 -dst 沙盒路径` | 把文件/文件夹复制到沙盒 |
 | `pull` | `-src 沙盒路径 -dst 主机路径` | 把文件/文件夹复制到主机 |
 | `call` | `call <action> -paramsJson ...` | 调用任意代理操作 |
