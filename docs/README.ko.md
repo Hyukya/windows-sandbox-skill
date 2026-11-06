@@ -12,7 +12,7 @@ host: sbx.ps1 ──JSON──▶ %USERPROFILE%\WinSandboxBridge ═(mapped fold
 
 | 분류 | 액션 |
 |---|---|
-| 수명 관리 | `check` `start` `stop` `status` `logs` `update-agent` (재부팅 없이 에이전트 갱신) |
+| 수명 관리 | `check` `start` `attach` `stop` `status` `logs` `update-agent` (재부팅 없이 에이전트 갱신) |
 | 호스트 파일 실행 | `run` — 호스트의 파일·폴더·URL을 넣고 형식에 맞게 실행(exe, msi, ps1, bat/cmd, js, reg, zip, iso, 폴더, URL). 샌드박스가 꺼져 있으면 먼저 부팅 |
 | 명령 | `exec`(PowerShell/cmd, stdout·stderr·종료 코드·타임아웃), `job_start` / `job_status` / `job_stop`, `launch`, `ps`, `kill` |
 | 화면 | `screenshot`(전체/영역/창, 축소, 커서 표시), `screen`, `cursor`, `host_screenshot`(호스트에서 샌드박스 창 캡처, 게스트 내부 캡처가 막혔을 때) |

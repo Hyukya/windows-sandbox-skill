@@ -12,7 +12,8 @@
 | 액션 | 파라미터 | 설명 |
 |---|---|---|
 | `check` | | 설치/하이퍼바이저/재부팅 대기/브리지 경로 진단, `hints` |
-| `start` | `-noNetwork` `-memory MB(4096)` `-vgpu` `-noClipboard` `-map "host[=sandbox][;ro]\|..."` `-timeout 240` | .wsb 생성 후 실행, 에이전트 하트비트까지 대기, `info` 반환 |
+| `start` | `-noNetwork` `-memory MB(4096)` `-vgpu` `-noClipboard` `-map "host[=sandbox][;ro]\|..."` `-timeout 240` | .wsb 생성 후 실행, 에이전트 하트비트까지 대기, `info` 반환. 사용자가 직접 연 샌드박스가 이미 실행 중이면 대신 그 샌드박스에 붙음(`attach` 참고, 설정 옵션은 경고와 함께 무시) |
+| `attach` | `-id` `-map "host[=sandbox][;ro]\|..."` `-timeout 240` | 에이전트 없이 이미 실행 중인 샌드박스(시작 메뉴로 연 것 등)에 재시작 없이 에이전트를 붙임. `wsb.exe`(Windows 11 24H2+)로 브리지를 `C:\Bridge`에 공유하고 로그인 세션에서 런처 실행. `attached` + `info` 또는 `alreadyRunning` 반환 |
 | `stop` | `-kill` | 게스트 shutdown → 남은 프로세스 강제 종료 |
 | `status` | | 하트비트(`ageSeconds`), 샌드박스 프로세스 |
 | `logs` | `-lines 40` | agent.log / launcher.log 꼬리 |

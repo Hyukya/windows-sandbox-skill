@@ -12,7 +12,7 @@ host: sbx.ps1 ──JSON──▶ %USERPROFILE%\WinSandboxBridge ═(mapped fold
 
 | Area | Actions |
 |---|---|
-| Lifecycle | `check` `start` `stop` `status` `logs` `update-agent` (reload the agent without rebooting) |
+| Lifecycle | `check` `start` `attach` `stop` `status` `logs` `update-agent` (reload the agent without rebooting) |
 | Run host files | `run` — copy a host file/folder/URL in and run it by type (exe, msi, ps1, bat/cmd, js, reg, zip, iso, folder, URL), booting the sandbox if needed |
 | Commands | `exec` (PowerShell/cmd with stdout, stderr, exit code, timeout), `job_start` / `job_status` / `job_stop`, `launch`, `ps`, `kill` |
 | Screen | `screenshot` (full screen, region or window; scaling; cursor marker), `screen`, `cursor`, `host_screenshot` (captures the sandbox window from the host, for when in-guest capture is blocked) |

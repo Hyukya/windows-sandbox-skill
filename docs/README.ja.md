@@ -12,7 +12,7 @@ host: sbx.ps1 ──JSON──▶ %USERPROFILE%\WinSandboxBridge ═(mapped fold
 
 | 分類 | アクション |
 |---|---|
-| ライフサイクル | `check` `start` `stop` `status` `logs` `update-agent`(再起動なしでエージェントを更新) |
+| ライフサイクル | `check` `start` `attach` `stop` `status` `logs` `update-agent`(再起動なしでエージェントを更新) |
 | ホストファイル実行 | `run` — ホストのファイル・フォルダー・URLを入れて種類に応じて実行(exe, msi, ps1, bat/cmd, js, reg, zip, iso, フォルダー, URL)。サンドボックスが停止中なら先に起動 |
 | コマンド | `exec`(PowerShell/cmd、stdout・stderr・終了コード・タイムアウト)、`job_start` / `job_status` / `job_stop`、`launch`、`ps`、`kill` |
 | 画面 | `screenshot`(全画面/領域/ウィンドウ、縮小、カーソル表示)、`screen`、`cursor`、`host_screenshot`(ホストからサンドボックスのウィンドウをキャプチャ。ゲスト内キャプチャが禁止されている場合用) |

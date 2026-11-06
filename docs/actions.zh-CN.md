@@ -12,7 +12,8 @@
 | 操作 | 参数 | 说明 |
 |---|---|---|
 | `check` | | 诊断安装 / 虚拟机监控程序 / 待重启 / 桥接路径，返回 `hints` |
-| `start` | `-noNetwork` `-memory MB(4096)` `-vgpu` `-noClipboard` `-map "host[=sandbox][;ro]\|..."` `-timeout 240` | 生成 .wsb 并启动，等待代理心跳，返回 `info` |
+| `start` | `-noNetwork` `-memory MB(4096)` `-vgpu` `-noClipboard` `-map "host[=sandbox][;ro]\|..."` `-timeout 240` | 生成 .wsb 并启动，等待代理心跳，返回 `info`。如果已有手动打开的沙盒在运行，则改为附加到它（见 `attach`；设置类选项会被忽略并给出警告） |
+| `attach` | `-id` `-map "host[=sandbox][;ro]\|..."` `-timeout 240` | 为已在运行但没有代理的沙盒（从开始菜单打开的等）附加代理，无需重启。通过 `wsb.exe`（Windows 11 24H2+）把桥接文件夹共享到 `C:\Bridge`，并在已登录会话中启动启动器。返回 `attached` + `info` 或 `alreadyRunning` |
 | `stop` | `-kill` | 关闭客户机 → 强制结束剩余进程 |
 | `status` | | 心跳（`ageSeconds`）、沙盒进程 |
 | `logs` | `-lines 40` | agent.log / launcher.log 的末尾 |

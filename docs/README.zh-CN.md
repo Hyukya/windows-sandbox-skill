@@ -12,7 +12,7 @@ host: sbx.ps1 ──JSON──▶ %USERPROFILE%\WinSandboxBridge ═(mapped fold
 
 | 类别 | 操作 |
 |---|---|
-| 生命周期 | `check` `start` `stop` `status` `logs` `update-agent`（无需重启即可更新代理） |
+| 生命周期 | `check` `start` `attach` `stop` `status` `logs` `update-agent`（无需重启即可更新代理） |
 | 运行主机文件 | `run` — 将主机上的文件/文件夹/URL 放入并按类型运行(exe、msi、ps1、bat/cmd、js、reg、zip、iso、文件夹、URL),沙盒未运行时先启动 |
 | 命令 | `exec`（PowerShell/cmd，含 stdout、stderr、退出码、超时），`job_start` / `job_status` / `job_stop`，`launch`，`ps`，`kill` |
 | 屏幕 | `screenshot`（全屏/区域/窗口，缩放，光标标记），`screen`，`cursor`，`host_screenshot`（从主机截取沙盒窗口，用于客户机内截屏被阻止时） |

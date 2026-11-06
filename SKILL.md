@@ -32,7 +32,7 @@ $SBX <action> -name value -flag ...
 
 1. **Check and start**: run `$SBX check` first to see the install state. Then run `$SBX start` (boot takes about 60–90 s and returns `info` when done). If it is already running you get `alreadyRunning`.
    - Options: `-noNetwork`, `-memory 8192`, `-vgpu`, `-noClipboard`, `-map "D:\proj"` (mapped onto the sandbox desktop), `-map "D:\in=C:\in;ro|D:\out=C:\out"`.
-   - Only one sandbox can run at a time. If another sandbox window is open, start fails; close it or run `$SBX stop -kill`.
+   - Only one sandbox can run at a time. If the user already opened one by hand (no agent inside), `start` attaches to it instead of failing — no restart, the user's open windows and files stay. Settings options (`-memory`, `-noNetwork`, …) cannot change on a running sandbox and come back as a `warnings` entry; `-map` still works. To attach explicitly, run `$SBX attach`. This needs `wsb.exe` (Windows 11 24H2+); without it, close the sandbox or run `$SBX stop -kill`, then `start`.
 2. **Observe, act, re-observe loop**: when driving a GUI, take a `screenshot` → view the returned `hostPath` image with the Read tool → run `click`/`type`/`keys` → take another `screenshot` to confirm the result. Input is only guaranteed to have been *sent*, not to have done what you intended, so do not move on without checking.
 3. **Shut down**: run `$SBX stop`. It shuts down from inside the sandbox and force-kills it if that fails. **The sandbox is disposable.** Closing it wipes all state inside, so `pull` out anything you want to keep first.
 

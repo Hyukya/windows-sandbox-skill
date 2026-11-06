@@ -1,6 +1,6 @@
 # Host-side controller for Windows Sandbox.
 # Usage: powershell -NoProfile -ExecutionPolicy Bypass -File sbx.ps1 <action> [-name value]... [-flag]
-# Host actions : check, start, stop, status, run, host_screenshot, push, pull, update-agent, logs, call
+# Host actions : check, start, attach, stop, status, run, host_screenshot, push, pull, update-agent, logs, call
 # Agent actions: anything else is forwarded to the in-sandbox agent (see references/actions.md)
 # Output: one JSON object on stdout. Exit code 0 = ok, 1 = error.
 
@@ -155,6 +155,116 @@ function Send-Secure([string]$op, $params, [double]$waitSec = 20) {
     Fail "Timed out after $waitSec s waiting for secure helper op '$op'."
 }
 
+function Get-MapSpecs {
+    # -map "C:\host\dir" or "C:\host\dir=C:\in\sandbox" or "...;ro" ; multiple separated by '|'
+    $specs = @()
+    foreach ($m in ([string](Get-Param 'map' '') -split '\|' | Where-Object { $_ })) {
+        $ro = $false; if ($m -match ';ro$') { $ro = $true; $m = $m -replace ';ro$', '' }
+        $parts = $m -split '=', 2
+        $hostDir = (Resolve-Path -LiteralPath $parts[0]).Path
+        $sbDir = if ($parts.Count -gt 1) { $parts[1] } else { 'C:\Users\WDAGUtilityAccount\Desktop\' + (Split-Path -Leaf $hostDir) }
+        $specs += [ordered]@{ host = $hostDir; sandbox = $sbDir; readOnly = $ro }
+    }
+    return $specs
+}
+
+# ---------------------------------------------------------------- Windows Sandbox CLI (wsb.exe)
+# Ships with the Store build of Windows Sandbox (Windows 11 24H2+). It can share folders into and run
+# commands in a sandbox that is ALREADY running, which is what lets `attach` add the agent without a restart.
+function Get-WsbExe {
+    $c = Get-Command 'wsb.exe' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($c) { return $c.Source }
+    $p = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\wsb.exe'
+    if (Test-Path -LiteralPath $p) { return $p }
+    return $null
+}
+function Invoke-Wsb([string[]]$wsbArgs) {
+    # returns { code; text; json } ; never throws on a non-zero exit (stderr is folded into text)
+    $exe = Get-WsbExe
+    if (-not $exe) { return [pscustomobject]@{ code = -1; text = 'wsb.exe not found'; json = $null } }
+    $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try { $lines = @(& $exe @wsbArgs --raw 2>&1 | ForEach-Object { "$_" }); $code = $LASTEXITCODE }
+    finally { $ErrorActionPreference = $eap }
+    $text = ($lines -join "`n").Trim()
+    $json = $null; if ($text.StartsWith('{')) { try { $json = $text | ConvertFrom-Json } catch {} }
+    return [pscustomobject]@{ code = $code; text = $text; json = $json }
+}
+function Get-WsbIds {
+    $r = Invoke-Wsb @('list')
+    if ($r.code -ne 0 -or -not $r.json) { return @() }
+    return @($r.json.WindowsSandboxEnvironments | ForEach-Object { [string]$_.Id } | Where-Object { $_ })
+}
+
+function Invoke-Attach([double]$timeout = 240) {
+    # Inject the agent into a sandbox that was started without sbx.ps1 (e.g. from the Start menu).
+    # returns an ordered result (alreadyRunning or attached+info); calls Fail on error
+    if (Test-AgentAlive) { return [ordered]@{ ok = $true; alreadyRunning = $true; status = (Get-Status) } }
+    if (-not (Get-WsbExe)) {
+        Fail 'attach needs the Windows Sandbox CLI (wsb.exe), which ships with Windows Sandbox on Windows 11 24H2 or later. Without it the agent can only be added at launch: close the sandbox (sbx.ps1 stop -kill) and run sbx.ps1 start.'
+    }
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    $id = [string](Get-Param 'id' '')
+    if (-not $id) {
+        $ids = @(Get-WsbIds)
+        # a sandbox that is still opening may not be listed yet
+        while ($ids.Count -eq 0 -and @(Get-SandboxProcs).Count -gt 0 -and $sw.Elapsed.TotalSeconds -lt [math]::Min(60, $timeout)) { Start-Sleep -Seconds 2; $ids = @(Get-WsbIds) }
+        if ($ids.Count -eq 0) { Fail 'No running Windows Sandbox found to attach to. Start one with: sbx.ps1 start' }
+        if ($ids.Count -gt 1) { Fail 'More than one sandbox is running; pass -id <id>.' @{ ids = $ids } }
+        $id = $ids[0]
+    }
+
+    Initialize-Bridge
+    foreach ($d in 'inbox', 'outbox') { Get-ChildItem (Join-Path $Bridge $d) -File -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue }
+    Remove-Item $StatusFile -Force -ErrorAction SilentlyContinue
+
+    # 1. share the bridge folder at C:\Bridge (writable)
+    $warnings = @()
+    $share = $null
+    for ($i = 0; $i -lt 3; $i++) {
+        $share = Invoke-Wsb @('share', '--id', $id, '-f', $Bridge, '-s', $SandboxBridge, '-w')
+        if ($share.code -eq 0) { break }
+        Start-Sleep -Seconds 2
+    }
+    $shareError = if ($share.code -ne 0) { $share.text } else { $null }
+    if ($shareError) { $warnings += "Sharing the bridge at $SandboxBridge failed ($shareError); trying anyway in case it is already shared." }
+
+    # 2. optional extra folders (-map, same syntax as start)
+    $mapped = @()
+    foreach ($m in (Get-MapSpecs)) {
+        $a = @('share', '--id', $id, '-f', $m.host, '-s', $m.sandbox); if (-not $m.readOnly) { $a += '-w' }
+        $r = Invoke-Wsb $a
+        if ($r.code -eq 0) { $mapped += $m } else { $warnings += "Sharing $($m.host) -> $($m.sandbox) failed: $($r.text)" }
+    }
+
+    # 3. start the launcher in the signed-in user's session (retry while the desktop is still logging on)
+    $cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File $SandboxBridge\agent\attach.ps1 -Bridge $SandboxBridge"
+    $exec = $null
+    while ($sw.Elapsed.TotalSeconds -lt $timeout) {
+        $exec = Invoke-Wsb @('exec', '--id', $id, '-r', 'ExistingLogin', '-c', $cmd)
+        if ($exec.code -eq 0) { break }
+        Start-Sleep -Seconds 3
+    }
+    if ($exec.code -ne 0) { Fail "attach: could not run a command in the sandbox within $timeout s: $($exec.text)" @{ id = $id; shareError = $shareError } }
+    $guestCode = if ($exec.json -and $null -ne $exec.json.ExitCode) { [int]$exec.json.ExitCode } else { 0 }
+    if ($guestCode -ne 0) {
+        Fail "attach: the bootstrap script exited with code $guestCode inside the sandbox. $SandboxBridge is probably not this host's bridge folder ($Bridge)." @{ id = $id; shareError = $shareError }
+    }
+
+    # 4. wait for the heartbeat
+    while ($sw.Elapsed.TotalSeconds -lt $timeout) {
+        if (Test-AgentAlive) {
+            Start-Sleep -Milliseconds 500
+            $info = (Send-Request 'info' ([ordered]@{}) 30).result
+            $o = [ordered]@{ ok = $true; attached = $true; id = $id; attachSeconds = [math]::Round($sw.Elapsed.TotalSeconds, 1); info = $info }
+            if ($mapped.Count) { $o.mapped = $mapped }
+            if ($warnings.Count) { $o.warnings = $warnings }
+            return $o
+        }
+        Start-Sleep -Seconds 1
+    }
+    Fail "attach: the agent did not report a heartbeat within $timeout s. Look at $Bridge\logs." @{ id = $id; shareError = $shareError; warnings = $warnings }
+}
+
 function New-WsbConfig {
     $net = if (Get-Param 'noNetwork' $false) { 'Disable' } else { 'Enable' }
     $gpu = if (Get-Param 'vgpu' $false) { 'Enable' } else { 'Disable' }
@@ -162,14 +272,8 @@ function New-WsbConfig {
     $clip = if (Get-Param 'noClipboard' $false) { 'Disable' } else { 'Enable' }
     $maps = New-Object System.Text.StringBuilder
     [void]$maps.AppendLine("    <MappedFolder><HostFolder>$([Security.SecurityElement]::Escape($Bridge))</HostFolder><SandboxFolder>$SandboxBridge</SandboxFolder><ReadOnly>false</ReadOnly></MappedFolder>")
-    # -map "C:\host\dir" or "C:\host\dir=C:\in\sandbox" or "...;ro" ; multiple separated by '|'
-    $mapArg = [string](Get-Param 'map' '')
-    foreach ($m in ($mapArg -split '\|' | Where-Object { $_ })) {
-        $ro = 'false'; if ($m -match ';ro$') { $ro = 'true'; $m = $m -replace ';ro$', '' }
-        $parts = $m -split '=', 2
-        $hostDir = (Resolve-Path -LiteralPath $parts[0]).Path
-        $sbDir = if ($parts.Count -gt 1) { $parts[1] } else { 'C:\Users\WDAGUtilityAccount\Desktop\' + (Split-Path -Leaf $hostDir) }
-        [void]$maps.AppendLine("    <MappedFolder><HostFolder>$([Security.SecurityElement]::Escape($hostDir))</HostFolder><SandboxFolder>$([Security.SecurityElement]::Escape($sbDir))</SandboxFolder><ReadOnly>$ro</ReadOnly></MappedFolder>")
+    foreach ($m in (Get-MapSpecs)) {
+        [void]$maps.AppendLine("    <MappedFolder><HostFolder>$([Security.SecurityElement]::Escape($m.host))</HostFolder><SandboxFolder>$([Security.SecurityElement]::Escape($m.sandbox))</SandboxFolder><ReadOnly>$(([string]$m.readOnly).ToLowerInvariant())</ReadOnly></MappedFolder>")
     }
     $logon = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File $SandboxBridge\agent\launcher.ps1 -Bridge $SandboxBridge"
     return @"
@@ -194,7 +298,14 @@ function Start-Sandbox([double]$timeout = 240) {
     if (-not (Test-Path (Join-Path $env:windir 'System32\WindowsSandbox.exe'))) { Fail 'Windows Sandbox is not installed. Run: sbx.ps1 check' }
     if (Test-AgentAlive) { return [ordered]@{ ok = $true; alreadyRunning = $true; status = (Get-Status) } }
     if (@(Get-SandboxProcs | Where-Object { $_.ProcessName -eq 'WindowsSandboxRemoteSession' -or $_.ProcessName -eq 'WindowsSandbox' }).Count -gt 0 -and -not (Get-Param 'force' $false)) {
-        Fail 'A Windows Sandbox instance is already running without the agent (only one instance is allowed). Close it, or run: sbx.ps1 stop -kill' @{ processes = @(Get-SandboxProcs | ForEach-Object { $_.ProcessName }) }
+        # A sandbox opened by hand has no agent. Attach to it instead of making the user restart it.
+        if (Get-WsbExe) {
+            $r = Invoke-Attach $timeout
+            $ignored = @('noNetwork', 'vgpu', 'memory', 'noClipboard') | Where-Object { $Params.Contains($_) }
+            if ($ignored) { $r.warnings = @($r.warnings | Where-Object { $_ }) + "Attached to the sandbox that was already running; its settings cannot change, so these options were ignored: $($ignored -join ', '). Use stop then start to apply them." }
+            return $r
+        }
+        Fail 'A Windows Sandbox instance is already running without the agent (only one instance is allowed), and wsb.exe (Windows 11 24H2+) is not available to attach to it. Close it, or run: sbx.ps1 stop -kill' @{ processes = @(Get-SandboxProcs | ForEach-Object { $_.ProcessName }) }
     }
     Initialize-Bridge
     foreach ($d in 'inbox', 'outbox') { Get-ChildItem (Join-Path $Bridge $d) -File -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue }
@@ -508,7 +619,7 @@ if (-not $letter) { throw 'image mounted but no drive letter appeared' }
 # ---------------------------------------------------------------- host actions
 switch ($Action.ToLowerInvariant()) {
     'help' {
-        Out-Json ([ordered]@{ ok = $true; usage = 'sbx.ps1 <action> [-param value]...'; hostActions = 'check start stop status run host_screenshot push pull update-agent logs call secure-shot secure-click secure-type secure-keys secure-move secure-desktop secure-sas'
+        Out-Json ([ordered]@{ ok = $true; usage = 'sbx.ps1 <action> [-param value]...'; hostActions = 'check start attach stop status run host_screenshot push pull update-agent logs call secure-shot secure-click secure-type secure-keys secure-move secure-desktop secure-sas'
             agentActions = 'ping info exec job_start job_status job_stop launch screen screenshot cursor move click mouse_down mouse_up drag scroll type keys key_down key_up windows window wait_window foreground ui_tree ui_find ui_invoke ui_set_value clipboard_get clipboard_set ls read_text write_text copy delete ps kill sleep secure_arm secure_status secure_sas uac restart_agent stop_agent shutdown'
             reference = (Join-Path $SkillDir 'references\actions.md') })
     }
@@ -530,6 +641,7 @@ switch ($Action.ToLowerInvariant()) {
         Out-Json ([ordered]@{ ok = $true; agentAlive = (Test-AgentAlive); status = $s; sandboxProcesses = @(Get-SandboxProcs | ForEach-Object { $_.ProcessName }); bridge = $Bridge })
     }
     'start' { Out-Json (Start-Sandbox ([double](Get-Param 'timeout' 240))) }
+    'attach' { Out-Json (Invoke-Attach ([double](Get-Param 'timeout' 240))) }
     { $_ -in 'host_screenshot', 'host-screenshot' } { try { $hs = Save-HostScreenshot } catch { Fail $_.Exception.Message }; Out-Json ([ordered]@{ ok = $true; action = 'host_screenshot'; result = $hs }) }
     'run' { Invoke-Run }
     'stop' {

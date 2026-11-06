@@ -12,7 +12,8 @@
 | アクション | パラメーター | 説明 |
 |---|---|---|
 | `check` | | インストール / ハイパーバイザー / 再起動待ち / ブリッジパスを診断し、`hints` を返す |
-| `start` | `-noNetwork` `-memory MB(4096)` `-vgpu` `-noClipboard` `-map "host[=sandbox][;ro]\|..."` `-timeout 240` | .wsb を作成して起動し、エージェントのハートビートまで待って `info` を返す |
+| `start` | `-noNetwork` `-memory MB(4096)` `-vgpu` `-noClipboard` `-map "host[=sandbox][;ro]\|..."` `-timeout 240` | .wsb を作成して起動し、エージェントのハートビートまで待って `info` を返す。手動で開いたサンドボックスが既に動いていれば、代わりにそれにアタッチする(`attach` 参照。設定オプションは警告付きで無視) |
+| `attach` | `-id` `-map "host[=sandbox][;ro]\|..."` `-timeout 240` | エージェントなしで既に動いているサンドボックス(スタートメニューから開いたものなど)に、再起動せずにエージェントを追加。`wsb.exe`(Windows 11 24H2+)でブリッジを `C:\Bridge` に共有し、サインイン中のセッションでランチャーを起動。`attached` + `info` または `alreadyRunning` を返す |
 | `stop` | `-kill` | ゲストをシャットダウン → 残ったプロセスを強制終了 |
 | `status` | | ハートビート(`ageSeconds`)、サンドボックスのプロセス |
 | `logs` | `-lines 40` | agent.log / launcher.log の末尾 |

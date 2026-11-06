@@ -12,7 +12,8 @@ Host-only options: `-wait <seconds>` (how long to wait for a response, default m
 | Action | Parameters | Description |
 |---|---|---|
 | `check` | | Diagnoses install / hypervisor / pending reboot / bridge path, returns `hints` |
-| `start` | `-noNetwork` `-memory MB(4096)` `-vgpu` `-noClipboard` `-map "host[=sandbox][;ro]\|..."` `-timeout 240` | Writes a .wsb and launches it, waits for the agent heartbeat, returns `info` |
+| `start` | `-noNetwork` `-memory MB(4096)` `-vgpu` `-noClipboard` `-map "host[=sandbox][;ro]\|..."` `-timeout 240` | Writes a .wsb and launches it, waits for the agent heartbeat, returns `info`. If a sandbox opened by hand is already running, attaches to it instead (see `attach`; settings options are ignored with a warning) |
+| `attach` | `-id` `-map "host[=sandbox][;ro]\|..."` `-timeout 240` | Adds the agent to a sandbox that is already running without it (opened from the Start menu, etc.) — no restart. Uses `wsb.exe` (Windows 11 24H2+) to share the bridge at `C:\Bridge` and start the launcher in the signed-in session. Returns `attached` + `info`, or `alreadyRunning` |
 | `stop` | `-kill` | Guest shutdown → force-kills leftover processes |
 | `status` | | Heartbeat (`ageSeconds`), sandbox processes |
 | `logs` | `-lines 40` | Tail of agent.log / launcher.log |
