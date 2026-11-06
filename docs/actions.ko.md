@@ -19,7 +19,7 @@
 | `logs` | `-lines 40` | agent.log / launcher.log 꼬리 |
 | `update-agent` | | `scripts/agent/*`를 브리지로 복사하고 에이전트 재시작 |
 | `run` | `-path 호스트파일\|폴더\|URL` 또는 `-sandboxPath`, `-args`, `-wait`, `-timeout 600`, `-silent`(msi), `-withFolder`, `-entry`(zip/iso 안의 파일), `-dst 샌드박스폴더(바탕화면)`, `-as 형식`, `-waitWindow`, `-screenshot`, `-settle 3`, `-noStart`, `-bootTimeout 240` + `start` 옵션 | 필요하면 부팅 → 복사 → 형식별 실행. 결과: `kind, mode(wait\|launch), sandboxPath, command, exec{exitCode,stdout,stderr}` 또는 `launch{pid}`, `extractedTo/mountedAt`, `screenshot`, `boot`. 형식 표는 SKILL.md 참고 |
-| `host_screenshot` | `-area display\|window`(display = 게스트 화면만), `-method auto\|print\|screen`, `-x -y -width -height`(잘라내기, 샌드박스 좌표), `-scale 1.0`, `-name`(`.jpg`면 JPEG), `-dst 호스트경로`, `-restore`, `-activate`, `-settle 0.7` | 샌드박스 창을 **호스트에서** 캡처. 에이전트가 필요 없어서 게스트가 화면 캡처를 막거나, 에이전트가 멈췄거나, 부팅 중일 때도 동작(UAC/잠금 화면은 `secure-shot` 사용). `print`(PrintWindow)는 창이 가려져 있어도 되고, `screen`은 호스트 화면을 복사하므로 창이 맨 위에 있어야 함. `auto` = print, 빈 이미지면 screen. 최소화 상태면 `-restore` 없이는 실패. 결과: `hostPath, method, area, blank, region, scale, window, hostRect, warnings`(display는 `screenshot`과 같은 좌표 변환). 보안 데스크톱이거나 호스트 화면이 표시되지 않는 동안(잠금/최소화된 원격 데스크톱)에는 검은 화면(`blank: true`) |
+| `host_screenshot` | `-area display\|window`(display = 게스트 화면만), `-method auto\|print\|screen`, `-x -y -width -height`(잘라내기, 샌드박스 좌표), `-scale 1.0`, `-name`(`.jpg`면 JPEG), `-dst 호스트경로`, `-restore`, `-activate`, `-settle 2.5`(복원 직후에는 이전 프레임이 남아 있으므로 대기) | 샌드박스 창을 **호스트에서** 캡처. 에이전트가 필요 없어서 게스트가 화면 캡처를 막거나, 에이전트가 멈췄거나, 부팅 중일 때도 동작(UAC/잠금 화면은 `secure-shot` 사용). `print`(PrintWindow)는 창이 가려져 있어도 되고, `screen`은 호스트 화면을 복사하므로 창이 맨 위에 있어야 함. `auto` = print, 빈 이미지면 screen. 최소화 상태면 `-restore` 없이는 실패. 결과: `hostPath, method, area, blank, region, scale, window, hostRect, warnings`(display는 `screenshot`과 같은 좌표 변환). 보안 데스크톱이거나 호스트 화면이 표시되지 않는 동안(잠금/최소화된 원격 데스크톱)에는 검은 화면(`blank: true`) |
 | `push` | `-src 호스트경로 -dst 샌드박스경로` | 파일/폴더를 샌드박스로 복사 |
 | `pull` | `-src 샌드박스경로 -dst 호스트경로` | 파일/폴더를 호스트로 복사 |
 | `call` | `call <action> -paramsJson ...` | 임의 에이전트 액션 호출 |
@@ -53,7 +53,7 @@
 | 액션 | 파라미터 | 결과 |
 |---|---|---|
 | `screen` | | 가상 화면, 모니터 목록, dpi, 커서 |
-| `screenshot` | `name`, `scale 1.0`, `x y width height`(영역) 또는 `title/hwnd/process`(창), `cursor true`, `.jpg` 이름이면 JPEG | `file, hostPath, region, scale, cursor` |
+| `screenshot` | `name`, `scale 1.0`, `x y width height`(영역) 또는 `title/hwnd/process`(창), `cursor true`, `.jpg` 이름이면 JPEG, `-cross`(호스트 측) | `file, hostPath, region, scale, cursor`. 영역 안에 `SetWindowDisplayAffinity`로 캡처를 막는 창이 있으면(이미지에서 검정 또는 누락) `blockedWindows[{hwnd,title,process,pid,affinity,rect}]`와 `warning`. `-cross`를 주면 호스트 캡처를 `hostScreenshot`(실패 시 `hostScreenshotError`)으로 첨부. 샌드박스 창이 최소화돼 있으면 `-restore` 추가. display affinity를 쓰지 않는 보호(DRM 영상 등)는 감지하지 못함 |
 | `cursor` | | `x, y` |
 | `move` | `x* y*`, `steps`, `duration ms` | 부드러운 이동은 steps>1 |
 | `click` | `x y`(생략 시 현재 위치), `button left\|right\|middle\|x1\|x2`, `double`, `count`, `modifiers "ctrl+shift"` | |

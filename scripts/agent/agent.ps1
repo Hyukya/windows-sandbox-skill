@@ -270,6 +270,27 @@ function Get-ScreenInfo {
     return [ordered]@{ virtual = @{ x = $vs.X; y = $vs.Y; width = $vs.Width; height = $vs.Height }; screens = $screens; dpi = $dpi; cursor = @{ x = $pt.X; y = $pt.Y } }
 }
 
+# Visible windows inside the capture region that opted out of screen capture with
+# SetWindowDisplayAffinity. CopyFromScreen does not fail for them: they come out black
+# (WDA_MONITOR) or missing (WDA_EXCLUDEFROMCAPTURE). DRM video and other protection that does
+# not use display affinity is not detected.
+function Get-CaptureBlockedWindows([int]$x, [int]$y, [int]$w, [int]$h) {
+    $res = @()
+    foreach ($hw in [SbxNative]::TopWindows($true)) {
+        if (-not [SbxNative]::IsWindowVisible($hw) -or [SbxNative]::IsIconic($hw)) { continue }
+        $a = [SbxNative]::DisplayAffinity($hw)
+        if ($a -eq 0) { continue }
+        $r = New-Object SbxNative+RECT; [void][SbxNative]::GetWindowRect($hw, [ref]$r)
+        if ($r.Right -le $x -or $r.Bottom -le $y -or $r.Left -ge ($x + $w) -or $r.Top -ge ($y + $h)) { continue }
+        $procId = [uint32]0; [void][SbxNative]::GetWindowThreadProcessId($hw, [ref]$procId)
+        $pn = try { (Get-Process -Id $procId -ErrorAction Stop).ProcessName } catch { $null }
+        $res += [ordered]@{ hwnd = $hw.ToInt64(); title = [SbxNative]::WindowText($hw); process = $pn; pid = [int]$procId
+            affinity = $(switch ($a) { 1 { 'monitor' } 17 { 'excludeFromCapture' } default { '0x{0:x}' -f $a } })
+            rect = @{ x = $r.Left; y = $r.Top; width = $r.Right - $r.Left; height = $r.Bottom - $r.Top } }
+    }
+    return $res   # callers wrap in @()
+}
+
 function Save-Screenshot($p, [string]$id) {
     $vs = [System.Windows.Forms.SystemInformation]::VirtualScreen
     $x = [int](P $p 'x' $vs.X); $y = [int](P $p 'y' $vs.Y)
@@ -306,8 +327,14 @@ function Save-Screenshot($p, [string]$id) {
     $out = Join-Path $Dirs.shots $name
     $fmt = if ($name -match '\.jpe?g$') { [System.Drawing.Imaging.ImageFormat]::Jpeg } else { [System.Drawing.Imaging.ImageFormat]::Png }
     $bmp.Save($out, $fmt); $bmp.Dispose()
-    return [ordered]@{ file = "shots/$name"; sandboxPath = $out; region = @{ x = $x; y = $y; width = $w; height = $h }; scale = $scale; cursor = @{ x = $pt.X; y = $pt.Y }
+    $res = [ordered]@{ file = "shots/$name"; sandboxPath = $out; region = @{ x = $x; y = $y; width = $w; height = $h }; scale = $scale; cursor = @{ x = $pt.X; y = $pt.Y }
         note = 'Image pixel (px,py) -> screen (region.x + px/scale, region.y + py/scale)' }
+    $blocked = @(try { Get-CaptureBlockedWindows $x $y $w $h } catch { })
+    if ($blocked.Count) {
+        $res.blockedWindows = $blocked
+        $res.warning = "$($blocked.Count) window(s) block screen capture and are black or missing in this image; use host_screenshot (or screenshot -cross) to see them."
+    }
+    return $res
 }
 
 # ---------------------------------------------------------------- mouse

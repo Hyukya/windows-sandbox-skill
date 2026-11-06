@@ -19,7 +19,7 @@
 | `logs` | `-lines 40` | agent.log / launcher.log 的末尾 |
 | `update-agent` | | 把 `scripts/agent/*` 复制到桥接文件夹并重启代理 |
 | `run` | `-path 主机文件\|文件夹\|URL` 或 `-sandboxPath`、`-args`、`-wait`、`-timeout 600`、`-silent`(msi)、`-withFolder`、`-entry`(zip/iso 内的文件)、`-dst 沙盒文件夹(桌面)`、`-as 类型`、`-waitWindow`、`-screenshot`、`-settle 3`、`-noStart`、`-bootTimeout 240` + `start` 选项 | 必要时启动 → 复制 → 按类型运行。结果: `kind, mode(wait\|launch), sandboxPath, command, exec{exitCode,stdout,stderr}` 或 `launch{pid}`、`extractedTo/mountedAt`、`screenshot`、`boot`。类型表见 SKILL.md |
-| `host_screenshot` | `-area display\|window`（display = 仅客户机屏幕）、`-method auto\|print\|screen`、`-x -y -width -height`（裁剪，沙盒坐标）、`-scale 1.0`、`-name`（`.jpg` 则为 JPEG）、`-dst 主机路径`、`-restore`、`-activate`、`-settle 0.7` | **从主机**截取沙盒窗口。无需代理，因此在客户机禁止截屏、代理卡死、启动中也能用（UAC/锁屏请用 `secure-shot`）。`print`（PrintWindow）在窗口被遮挡时也可用；`screen` 复制主机屏幕，窗口须在最前。`auto` = print，图像为空时改用 screen。窗口最小化时须加 `-restore`，否则失败。结果：`hostPath, method, area, blank, region, scale, window, hostRect, warnings`（display 的坐标换算与 `screenshot` 相同）。安全桌面期间以及主机桌面未显示时（锁定/最小化的远程桌面）返回黑屏（`blank: true`） |
+| `host_screenshot` | `-area display\|window`（display = 仅客户机屏幕）、`-method auto\|print\|screen`、`-x -y -width -height`（裁剪，沙盒坐标）、`-scale 1.0`、`-name`（`.jpg` 则为 JPEG）、`-dst 主机路径`、`-restore`、`-activate`、`-settle 2.5`（恢复后先显示旧画面，需等待） | **从主机**截取沙盒窗口。无需代理，因此在客户机禁止截屏、代理卡死、启动中也能用（UAC/锁屏请用 `secure-shot`）。`print`（PrintWindow）在窗口被遮挡时也可用；`screen` 复制主机屏幕，窗口须在最前。`auto` = print，图像为空时改用 screen。窗口最小化时须加 `-restore`，否则失败。结果：`hostPath, method, area, blank, region, scale, window, hostRect, warnings`（display 的坐标换算与 `screenshot` 相同）。安全桌面期间以及主机桌面未显示时（锁定/最小化的远程桌面）返回黑屏（`blank: true`） |
 | `push` | `-src 主机路径 -dst 沙盒路径` | 把文件/文件夹复制到沙盒 |
 | `pull` | `-src 沙盒路径 -dst 主机路径` | 把文件/文件夹复制到主机 |
 | `call` | `call <action> -paramsJson ...` | 调用任意代理操作 |
@@ -53,7 +53,7 @@
 | 操作 | 参数 | 结果 |
 |---|---|---|
 | `screen` | | 虚拟屏幕、显示器列表、dpi、光标 |
-| `screenshot` | `name`、`scale 1.0`、`x y width height`（区域）或 `title/hwnd/process`（窗口）、`cursor true`、名称以 `.jpg` 结尾则保存为 JPEG | `file, hostPath, region, scale, cursor` |
+| `screenshot` | `name`、`scale 1.0`、`x y width height`（区域）或 `title/hwnd/process`（窗口）、`cursor true`、名称以 `.jpg` 结尾则保存为 JPEG、`-cross`（主机端） | `file, hostPath, region, scale, cursor`。区域内有窗口用 `SetWindowDisplayAffinity` 阻止截图时（图像中为黑色或缺失），返回 `blockedWindows[{hwnd,title,process,pid,affinity,rect}]` 和 `warning`。加 `-cross` 会附上主机截图 `hostScreenshot`（失败时为 `hostScreenshotError`）；沙盒窗口最小化时再加 `-restore`。不使用 display affinity 的保护（如 DRM 视频）无法检测 |
 | `cursor` | | `x, y` |
 | `move` | `x* y*`、`steps`、`duration ms` | steps>1 时平滑移动 |
 | `click` | `x y`（省略则为当前位置）、`button left\|right\|middle\|x1\|x2`、`double`、`count`、`modifiers "ctrl+shift"` | |

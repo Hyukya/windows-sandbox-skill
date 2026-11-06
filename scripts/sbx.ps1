@@ -398,6 +398,18 @@ function Use-HostNative {
     [SbxHost]::MakeDpiAware()
 }
 
+# When an in-guest screenshot reports capture-blocked windows (black/missing in the image), take a
+# host capture as well and attach it as result.hostScreenshot (or hostScreenshotError).
+function Add-CrossHostShot($shot) {
+    if (-not $shot -or -not $shot.blockedWindows -or @($shot.blockedWindows).Count -eq 0) { return $shot }
+    $saved = if ($Params.Contains('name')) { $Params['name'] } else { $null }
+    $Params['name'] = 'host_' + [IO.Path]::GetFileName([string]$shot.file)
+    try { $shot | Add-Member -NotePropertyName hostScreenshot -NotePropertyValue (Save-HostScreenshot) -Force }
+    catch { $shot | Add-Member -NotePropertyName hostScreenshotError -NotePropertyValue $_.Exception.Message -Force }
+    finally { if ($null -ne $saved) { $Params['name'] = $saved } else { $Params.Remove('name') } }
+    return $shot
+}
+
 function Save-HostScreenshot {
     # Captures the sandbox window from the HOST (no agent needed). Works when the guest blocks screen capture,
     # the agent is dead/hung, or during boot/logon. -area display|window, -method auto|print|screen,
@@ -417,7 +429,7 @@ function Save-HostScreenshot {
         [void][SbxHost]::ShowWindow($hwnd, 4); $restored = $true   # SW_SHOWNOACTIVATE
     }
     if (Get-Param 'activate' $false) { [SbxHost]::Activate($hwnd); $restored = $true }
-    if ($restored) { Start-Sleep -Milliseconds ([int]([double](Get-Param 'settle' 0.7) * 1000)) }
+    if ($restored) { Start-Sleep -Milliseconds ([int]([double](Get-Param 'settle' 2.5) * 1000)) }
 
     $area = ([string](Get-Param 'area' 'display')).ToLowerInvariant()
     if ($area -notin 'display', 'window') { throw "host_screenshot: -area must be display or window (got '$area')" }
@@ -612,7 +624,7 @@ if (-not $letter) { throw 'image mounted but no drive letter appeared' }
     if (Get-Param 'screenshot' $false) {
         if ($mode -eq 'launch') { Start-Sleep -Milliseconds ([int]([double](Get-Param 'settle' 3) * 1000)) }
         $s = Add-HostPaths (Send-Request 'screenshot' ([ordered]@{ name = "run_$(Get-Date -Format 'HHmmss').png" }))
-        $out.screenshot = if ($s.ok) { $s.result } else {
+        $out.screenshot = if ($s.ok) { Add-CrossHostShot $s.result } else {
             # in-guest capture failed (e.g. the app blocks screen capture) -> capture the sandbox window from the host
             try { $h = Save-HostScreenshot; $h.agentError = $s.error; $h } catch { [ordered]@{ error = $s.error } }
         }
@@ -709,7 +721,9 @@ switch ($Action.ToLowerInvariant()) {
         $act = $act -replace '-', '_'
         $wait = [double](Get-Param 'wait' 0); if ($Params.Contains('wait')) { $Params.Remove('wait') }
         if ($Params.Contains('force')) { $Params.Remove('force') }
+        $cross = $false; if ($Params.Contains('cross')) { $cross = [bool]$Params['cross']; $Params.Remove('cross') }
         $r = Add-HostPaths (Send-Request $act $Params $wait)
+        if ($cross -and $act -eq 'screenshot' -and $r.ok) { $r.result = Add-CrossHostShot $r.result }
         Out-Json $r ([int](-not $r.ok))
     }
 }

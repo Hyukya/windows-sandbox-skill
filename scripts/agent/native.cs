@@ -152,6 +152,11 @@ public static class SbxNative
     }
     public static string ClassOf(IntPtr h) { var sb = new StringBuilder(256); GetClassName(h, sb, 256); return sb.ToString(); }
 
+    // SetWindowDisplayAffinity value of a window: 0 none, 1 WDA_MONITOR (black in captures),
+    // 0x11 WDA_EXCLUDEFROMCAPTURE (missing from captures). 0 when it cannot be read.
+    [DllImport("user32.dll")] static extern bool GetWindowDisplayAffinity(IntPtr h, out uint affinity);
+    public static uint DisplayAffinity(IntPtr h) { uint a; return GetWindowDisplayAffinity(h, out a) ? a : 0; }
+
     public static IntPtr[] TopWindows(bool includeHidden)
     {
         var list = new List<IntPtr>();
