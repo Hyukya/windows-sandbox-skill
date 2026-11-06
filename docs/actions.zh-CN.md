@@ -18,7 +18,7 @@
 | `logs` | `-lines 40` | agent.log / launcher.log 的末尾 |
 | `update-agent` | | 把 `scripts/agent/*` 复制到桥接文件夹并重启代理 |
 | `run` | `-path 主机文件\|文件夹\|URL` 或 `-sandboxPath`、`-args`、`-wait`、`-timeout 600`、`-silent`(msi)、`-withFolder`、`-entry`(zip/iso 内的文件)、`-dst 沙盒文件夹(桌面)`、`-as 类型`、`-waitWindow`、`-screenshot`、`-settle 3`、`-noStart`、`-bootTimeout 240` + `start` 选项 | 必要时启动 → 复制 → 按类型运行。结果: `kind, mode(wait\|launch), sandboxPath, command, exec{exitCode,stdout,stderr}` 或 `launch{pid}`、`extractedTo/mountedAt`、`screenshot`、`boot`。类型表见 SKILL.md |
-| `host_screenshot` | `-area display\|window`（display = 仅客户机屏幕）、`-method auto\|print\|screen`、`-x -y -width -height`（裁剪，沙盒坐标）、`-scale 1.0`、`-name`（`.jpg` 则为 JPEG）、`-dst 主机路径`、`-restore`、`-activate`、`-settle 0.7` | **从主机**截取沙盒窗口。无需代理，因此在客户机禁止截屏、代理卡死、启动中也能用（UAC/锁屏请用 `secure-shot`）。`print`（PrintWindow）在窗口被遮挡时也可用；`screen` 复制主机屏幕，窗口须在最前。`auto` = print，图像为空时改用 screen。窗口最小化时须加 `-restore`，否则失败。结果：`hostPath, method, area, blank, region, scale, window, hostRect, warnings`（display 的坐标换算与 `screenshot` 相同） |
+| `host_screenshot` | `-area display\|window`（display = 仅客户机屏幕）、`-method auto\|print\|screen`、`-x -y -width -height`（裁剪，沙盒坐标）、`-scale 1.0`、`-name`（`.jpg` 则为 JPEG）、`-dst 主机路径`、`-restore`、`-activate`、`-settle 0.7` | **从主机**截取沙盒窗口。无需代理，因此在客户机禁止截屏、代理卡死、启动中也能用（UAC/锁屏请用 `secure-shot`）。`print`（PrintWindow）在窗口被遮挡时也可用；`screen` 复制主机屏幕，窗口须在最前。`auto` = print，图像为空时改用 screen。窗口最小化时须加 `-restore`，否则失败。结果：`hostPath, method, area, blank, region, scale, window, hostRect, warnings`（display 的坐标换算与 `screenshot` 相同）。安全桌面期间以及主机桌面未显示时（锁定/最小化的远程桌面）返回黑屏（`blank: true`） |
 | `push` | `-src 主机路径 -dst 沙盒路径` | 把文件/文件夹复制到沙盒 |
 | `pull` | `-src 沙盒路径 -dst 主机路径` | 把文件/文件夹复制到主机 |
 | `call` | `call <action> -paramsJson ...` | 调用任意代理操作 |

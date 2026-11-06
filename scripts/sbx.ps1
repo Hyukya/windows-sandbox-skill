@@ -337,8 +337,10 @@ function Save-HostScreenshot {
     if ($method -in 'auto', 'print') {
         try {
             $full = [SbxHost]::CapturePrint($hwnd)
-            # judge blankness on the whole window: a small crop of a plain area is legitimately one color
-            $fullBlank = [SbxHost]::LooksBlank($full)
+            # judge blankness on the whole guest display: a small crop of a plain area is legitimately one color,
+            # while the title bar would hide a black guest screen
+            $chk = [SbxHost]::Crop($full, $dr.Left - $wr.Left, $dr.Top - $wr.Top, $dr.Right - $dr.Left, $dr.Bottom - $dr.Top)
+            try { $fullBlank = [SbxHost]::LooksBlank($chk) } finally { $chk.Dispose() }
             try { $printBmp = [SbxHost]::Crop($full, $cx - $wr.Left, $cy - $wr.Top, $cw, $ch) } finally { $full.Dispose() }
             if ($method -eq 'print' -or -not $fullBlank) { $bmp = $printBmp; $used = 'print' }
         } catch { if ($method -eq 'print') { throw "host_screenshot: PrintWindow capture failed: $($_.Exception.Message)" }; $warn += "PrintWindow failed ($($_.Exception.Message)); trying a screen copy." }
@@ -355,7 +357,7 @@ function Save-HostScreenshot {
         }
     }
     $blank = [SbxHost]::LooksBlank($bmp)
-    if ($blank) { $warn += 'The captured image is a single color (guest screen black/locked/booting, or capture blocked on the host).' }
+    if ($blank) { $warn += 'The captured image is a single color (guest screen black or booting; the UAC / lock / Ctrl+Alt+Del secure desktop, which only secure-shot can capture; or capture blocked on the host).' }
 
     $scale = [double](Get-Param 'scale' 1.0)
     if ($scale -gt 0 -and $scale -ne 1.0) {
