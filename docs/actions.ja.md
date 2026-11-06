@@ -21,6 +21,15 @@
 | `push` | `-src ホストのパス -dst サンドボックスのパス` | ファイル/フォルダーをサンドボックスへコピー |
 | `pull` | `-src サンドボックスのパス -dst ホストのパス` | ファイル/フォルダーをホストへコピー |
 | `call` | `call <action> -paramsJson ...` | 任意のエージェントアクションを呼び出す |
+| `secure-shot` | `-name` | **現在の入力デスクトップ**（UAC/ロック/Ctrl+Alt+Del を含む）の全画面キャプチャ。`file, hostPath, desktop` |
+| `secure-click` | `-x* -y*`、`-button`、`-count` | 現在の入力デスクトップでクリック |
+| `secure-type` | `-text*` | 現在の入力デスクトップに Unicode 入力 |
+| `secure-keys` | `-keys*`、`-repeat`、`-delay` | 現在の入力デスクトップにキー入力（`ctrl+alt+del` 形式） |
+| `secure-move` | `-x* -y*` | 現在の入力デスクトップでカーソル移動 |
+| `secure-desktop` | | 現在の入力デスクトップ名（`Default`, `Winlogon` など） |
+| `secure-sas` | `-asUser` | セキュア アテンション シーケンスを送信（Ctrl+Alt+Del 画面を開く） |
+
+`secure-*` ホストアクションはエージェントを介さず SYSTEM ヘルパーと**直接**通信する。UAC プロンプトが出ているときはエージェントがブロックされる（その `launch`/`exec` が応答待ちになる）ため、この直接経路を使う。
 
 ## エージェントアクション(サンドボックス内)
 
@@ -93,6 +102,18 @@
 | `restart_agent` | 終了コード 0 → ランチャーが再起動(コードを再読み込み) |
 | `stop_agent` | 終了コード 99 → ランチャーも終了(サンドボックスは維持) |
 | `shutdown` | 応答後にゲスト OS をシャットダウン → サンドボックスのウィンドウが閉じる(`stop` が使用) |
+
+### セキュア デスクトップ (UAC / ロック画面 / Ctrl+Alt+Del)
+SYSTEM ヘルパー(スケジュール タスク `SbxSecure`、**昇格した**サンドボックス起動時に自動常駐、AtStartup トリガーで再起動後も維持)が対話型セッションで動き、現在アクティブなデスクトップを問わずキャプチャ/クリック/入力する — エージェント自身が届かないセキュア デスクトップも含む。上記のホスト直接 `secure-*` アクションで操作するか(プロンプトがエージェントを塞ぐときに推奨)、エージェントの自動ルーティングに任せる(入力デスクトップが `Default` でないとき `screenshot`/`click`/`type`/`keys` がヘルパーへ自動転送。`-secure` で強制、`-direct` で直接経路)。
+
+| アクション | パラメータ | 説明 |
+|---|---|---|
+| `uac` | `mode off\|prompt\|desktop\|allow`(既定 `prompt`)、`reboot true` | UAC ポリシーを設定し、`EnableLUA` が変われば再起動(ヘルパーは AtStartup で再常駐)。`off`=サンドボックス既定(完全昇格・プロンプトなし)、`prompt`=セキュア デスクトップの実 UAC、`desktop`=通常デスクトップの UAC(エージェントが直接クリック)、`allow`=プロンプトなしで昇格。**昇格したエージェントが必要**(新規起動)、UAC を上げる前に実行。`rebootRequired/rebooting` を返す |
+| `secure_status` | | `armed, task, inputDesktop, elevated, helper{pid,desktop,...}` |
+| `secure_arm` | | ヘルパーを再登録/再起動(冪等、登録には昇格が必要) |
+| `secure_sas` | `asUser` | SYSTEM からセキュア アテンション シーケンス送信(Ctrl+Alt+Del 画面) |
+
+実際の UAC プロンプトをクリックする流れ: `uac -mode prompt`(再起動) → 昇格するインストーラー/アプリを実行 → `secure-shot` でプロンプト確認 → **はい/Yes** に `secure-click -x -y`。既定のサンドボックスは `EnableLUA=0` なのでインストールは静かに自動昇格し、`prompt`/`desktop` モードに切り替えない限りプロンプトは出ない。
 
 ## ブリッジフォルダーの構成(ホスト `%USERPROFILE%\WinSandboxBridge` = サンドボックス `C:\Bridge`)
 `agent\`(コード) `inbox\` `outbox\` `shots\`(スクリーンショット) `files\`(転送用ステージング、自由に使用可) `jobs\`(ジョブ出力) `logs\` `status.json`(2 秒ごとのハートビート) `sandbox.wsb`(最後の起動設定)。

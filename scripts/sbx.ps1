@@ -119,6 +119,42 @@ function Add-HostPaths($resp) {
     return $resp
 }
 
+# Direct channel to the SYSTEM secure-desktop helper, bypassing the main agent. Needed because a
+# pending UAC prompt blocks the agent (its launch/exec waits for the elevation to be answered),
+# so the agent cannot drive the very prompt you need to click. The helper is a separate process.
+function Test-SecureAlive {
+    $beat = Join-Path $Bridge 'secure\secure.status.json'
+    if (-not (Test-Path $beat)) { return $false }
+    try { $s = [IO.File]::ReadAllText($beat, $Utf8) | ConvertFrom-Json
+        return (([DateTime]::UtcNow - [DateTime]::Parse($s.time).ToUniversalTime()).TotalSeconds -lt 12) } catch { return $false }
+}
+function Send-Secure([string]$op, $params, [double]$waitSec = 20) {
+    $secDir = Join-Path $Bridge 'secure'
+    if (-not (Test-SecureAlive) -and -not (Get-Param 'force' $false)) {
+        Fail "Secure-desktop helper is not running. It is armed automatically at an elevated sandbox start; run 'sbx.ps1 secure_status', or restart the sandbox." @{ secureStatus = (Join-Path $secDir 'secure.status.json') }
+    }
+    $in = Join-Path $secDir 'inbox'; $out = Join-Path $secDir 'outbox'
+    foreach ($d in $in, $out) { if (-not (Test-Path $d)) { New-Item -ItemType Directory -Force $d | Out-Null } }
+    $sid = '{0:yyyyMMddHHmmssfff}_{1}' -f (Get-Date), ([guid]::NewGuid().ToString('N').Substring(0, 6))
+    $req = [ordered]@{ id = $sid; op = $op }
+    foreach ($k in $params.Keys) { $req[$k] = $params[$k] }
+    $tmp = Join-Path $in "$sid.tmp"
+    [IO.File]::WriteAllText($tmp, ($req | ConvertTo-Json -Compress -Depth 8), $Utf8)
+    Move-Item -LiteralPath $tmp -Destination (Join-Path $in "$sid.json") -Force
+    $outFile = Join-Path $out "$sid.json"
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    while ($sw.Elapsed.TotalSeconds -lt $waitSec) {
+        if (Test-Path -LiteralPath $outFile) {
+            Start-Sleep -Milliseconds 20
+            try { $txt = [IO.File]::ReadAllText($outFile, $Utf8) } catch { Start-Sleep -Milliseconds 40; continue }
+            Remove-Item -LiteralPath $outFile -Force -ErrorAction SilentlyContinue
+            return ($txt | ConvertFrom-Json)
+        }
+        Start-Sleep -Milliseconds 50
+    }
+    Fail "Timed out after $waitSec s waiting for secure helper op '$op'."
+}
+
 function New-WsbConfig {
     $net = if (Get-Param 'noNetwork' $false) { 'Disable' } else { 'Enable' }
     $gpu = if (Get-Param 'vgpu' $false) { 'Enable' } else { 'Disable' }
@@ -350,8 +386,8 @@ if (-not $letter) { throw 'image mounted but no drive letter appeared' }
 # ---------------------------------------------------------------- host actions
 switch ($Action.ToLowerInvariant()) {
     'help' {
-        Out-Json ([ordered]@{ ok = $true; usage = 'sbx.ps1 <action> [-param value]...'; hostActions = 'check start stop status run push pull update-agent logs call'
-            agentActions = 'ping info exec job_start job_status job_stop launch screen screenshot cursor move click mouse_down mouse_up drag scroll type keys key_down key_up windows window wait_window foreground ui_tree ui_find ui_invoke ui_set_value clipboard_get clipboard_set ls read_text write_text copy delete ps kill sleep restart_agent stop_agent shutdown'
+        Out-Json ([ordered]@{ ok = $true; usage = 'sbx.ps1 <action> [-param value]...'; hostActions = 'check start stop status run push pull update-agent logs call secure-shot secure-click secure-type secure-keys secure-move secure-desktop secure-sas'
+            agentActions = 'ping info exec job_start job_status job_stop launch screen screenshot cursor move click mouse_down mouse_up drag scroll type keys key_down key_up windows window wait_window foreground ui_tree ui_find ui_invoke ui_set_value clipboard_get clipboard_set ls read_text write_text copy delete ps kill sleep secure_arm secure_status secure_sas uac restart_agent stop_agent shutdown'
             reference = (Join-Path $SkillDir 'references\actions.md') })
     }
     'check' {
@@ -419,6 +455,14 @@ switch ($Action.ToLowerInvariant()) {
         Copy-Item -LiteralPath $staged -Destination $dst -Recurse -Force
         Remove-Item -LiteralPath (Join-Path $Bridge "files\$stage") -Recurse -Force -ErrorAction SilentlyContinue
         Out-Json ([ordered]@{ ok = $true; src = $src; dst = (Resolve-Path -LiteralPath $dst).Path })
+    }
+    { $_ -match '^secure[-_](shot|click|type|keys|move|desktop|sas)$' } {
+        # Host-direct secure-desktop ops (bypass the agent; work even when a UAC prompt blocks it).
+        $op = ($Action -replace '^secure[-_]', '').ToLowerInvariant()
+        if ($Params.Contains('force')) { $Params.Remove('force') }
+        $r = Send-Secure $op $Params
+        if ($r.ok -and $r.result) { $r = Add-HostPaths $r }
+        Out-Json $r ([int](-not $r.ok))
     }
     default {
         $act = $Action

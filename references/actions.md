@@ -21,6 +21,15 @@ Host-only options: `-wait <seconds>` (how long to wait for a response, default m
 | `push` | `-src hostPath -dst sandboxPath` | Copies a file/folder into the sandbox |
 | `pull` | `-src sandboxPath -dst hostPath` | Copies a file/folder to the host |
 | `call` | `call <action> -paramsJson ...` | Calls an arbitrary agent action |
+| `secure-shot` | `-name` | Full-screen capture of the **current input desktop** (UAC / lock / Ctrl+Alt+Del included). `file, hostPath, desktop` |
+| `secure-click` | `-x* -y*`, `-button`, `-count` | Click on the current input desktop |
+| `secure-type` | `-text*` | Unicode typing on the current input desktop |
+| `secure-keys` | `-keys*`, `-repeat`, `-delay` | Key chords on the current input desktop (`ctrl+alt+del` style) |
+| `secure-move` | `-x* -y*` | Move the cursor on the current input desktop |
+| `secure-desktop` | | Name of the current input desktop (`Default`, `Winlogon`, ...) |
+| `secure-sas` | `-asUser` | Sends the Secure Attention Sequence (opens the Ctrl+Alt+Del screen) |
+
+The `secure-*` host actions talk **directly** to the SYSTEM helper, bypassing the agent. Use them when a UAC prompt is up, because a pending prompt blocks the agent (its `launch`/`exec` waits for the prompt to be answered, so it cannot drive the very prompt you need to click).
 
 ## Agent actions (inside the sandbox)
 
@@ -87,6 +96,18 @@ Target window: `hwnd|title|process` (foreground window if omitted). Element sear
 | `delete` | `path`* | Recursive delete |
 | `clipboard_get` / `clipboard_set` | `text` | Sandbox clipboard |
 
+### Secure desktop (UAC / lock screen / Ctrl+Alt+Del)
+A SYSTEM helper (scheduled task `SbxSecure`, armed automatically at an **elevated** sandbox start, with an AtStartup trigger so it survives reboots) runs in the interactive session and can screenshot/click/type on whatever desktop is currently active — including the secure desktop that the agent itself cannot reach. Drive it either with the host-direct `secure-*` actions above (preferred when a prompt is blocking the agent) or let the agent auto-route (`screenshot`/`click`/`type`/`keys` go to the helper automatically when the input desktop is not `Default`; force with `-secure`, or stay direct with `-direct`).
+
+| Action | Parameters | Description |
+|---|---|---|
+| `uac` | `mode off\|prompt\|desktop\|allow` (default `prompt`), `reboot true` | Sets the UAC policy, then reboots if `EnableLUA` changed (helper re-arms via AtStartup). `off` = sandbox default (fully elevated, no prompts); `prompt` = real UAC on the secure desktop; `desktop` = UAC on the normal desktop (agent clicks it directly); `allow` = elevate without prompting. **Needs an elevated agent** (fresh boot); run it before raising UAC. Returns `rebootRequired/rebooting` |
+| `secure_status` | | `armed, task, inputDesktop, elevated, helper{pid,desktop,...}` |
+| `secure_arm` | | Re-registers / restarts the helper (idempotent; needs elevation to register) |
+| `secure_sas` | `asUser` | Sends the Secure Attention Sequence from SYSTEM (Ctrl+Alt+Del screen) |
+
+Typical flow to click a real UAC prompt: `uac -mode prompt` (reboots) → run the installer/app that elevates → `secure-shot` to see the prompt → `secure-click -x -y` on **예/Yes**. Because the default sandbox boots with `EnableLUA=0`, installs auto-elevate silently and no prompt appears unless you switch to `prompt`/`desktop` mode.
+
 ### Agent lifecycle
 | Action | Description |
 |---|---|
@@ -95,4 +116,4 @@ Target window: `hwnd|title|process` (foreground window if omitted). Element sear
 | `shutdown` | After responding, shuts down the guest OS → the sandbox window closes (used by `stop`) |
 
 ## Bridge folder layout (host `%USERPROFILE%\WinSandboxBridge` = sandbox `C:\Bridge`)
-`agent\` (code) `inbox\` `outbox\` `shots\` (screenshots) `files\` (transfer staging, free to use) `jobs\` (job output) `logs\` `status.json` (heartbeat every 2 s) `sandbox.wsb` (last launch config).
+`agent\` (code) `inbox\` `outbox\` `shots\` (screenshots) `files\` (transfer staging, free to use) `jobs\` (job output) `logs\` `secure\` (secure-desktop helper: `inbox\` `outbox\` `shots\` `secure.status.json` heartbeat) `status.json` (heartbeat every 2 s) `sandbox.wsb` (last launch config).

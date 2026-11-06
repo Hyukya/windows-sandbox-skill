@@ -109,6 +109,34 @@ $SBX ps -name 'set*' ; $SBX kill -name setup
 
 The full list of actions and parameters is in `references/actions.md`. Read it when using an action for the first time or when unsure about a parameter.
 
+## Secure desktop: UAC, lock screen, Ctrl+Alt+Del
+
+SendInput and screen capture only reach the desktop the calling thread is on, so the agent alone cannot touch the UAC prompt, the lock screen or the Ctrl+Alt+Del screen (they live on the isolated `Winlogon` secure desktop). A SYSTEM helper (scheduled task `SbxSecure`) covers that: it is armed automatically at an **elevated** sandbox start and, via an AtStartup trigger, survives the reboot into UAC-enabled mode. It runs in the interactive session and drives whatever desktop is currently active.
+
+By default the sandbox boots with `EnableLUA=0`, so everything auto-elevates and **no UAC prompt ever appears** — ordinary installs just work. Switch modes only when you actually want prompts:
+
+```bash
+$SBX uac -mode prompt      # real UAC on the secure desktop (reboots); the helper clicks it
+$SBX uac -mode desktop     # UAC on the normal desktop (reboots); the agent clicks it directly
+$SBX uac -mode allow       # elevate without prompting, UAC subsystem on (reboots)
+$SBX uac -mode off         # back to the sandbox default: fully elevated, no prompts (reboots)
+```
+
+`uac` needs an elevated agent, so run it on a fresh boot before raising UAC. Changing `EnableLUA` reboots the sandbox (~60 s); the helper re-arms itself. If the agent does not come back within ~2 min (auto-logon occasionally stalls), run `$SBX stop -kill` then `$SBX start`.
+
+Clicking a real UAC prompt — use the **host-direct** `secure-*` actions, because a pending prompt blocks the agent (its `launch`/`exec` is waiting for the prompt to be answered):
+
+```bash
+$SBX uac -mode prompt                       # once, reboots into prompt mode
+$SBX run -path ./installer.exe               # (or launch) triggers the UAC prompt
+$SBX secure-shot                             # full-screen capture of the secure desktop -> hostPath
+# read the image, find the Yes button, then:
+$SBX secure-click -x 658 -y 557              # click 예/Yes on the secure desktop
+$SBX secure-desktop                          # 'Default' again once elevation completes
+```
+
+Ctrl+Alt+Del works the same way: `$SBX secure-sas` opens the security-options screen, then `secure-shot` / `secure-click`. The lock screen is reachable too (`secure-type` the password, `secure-keys enter`). `$SBX secure_status` reports whether the helper is armed. When the agent is **not** blocked (e.g. a prompt raised by a background `job_start`), the normal `screenshot`/`click`/`type`/`keys` auto-route to the helper while the input desktop is a secure one — add `-direct` to force the ordinary path or `-secure` to force the helper.
+
 ## Coordinates and screenshots
 
 - Coordinates are physical pixels on the sandbox screen with origin (0,0). Get the screen size from `screen` or from `info.screen` in the `start` result. By default it follows the host window size (e.g. 1536×832).
@@ -119,7 +147,7 @@ The full list of actions and parameters is in `references/actions.md`. Read it w
 ## Limitations to know
 
 - **No Store apps.** Inside the sandbox, Store apps such as Notepad, Calculator, Paint and Terminal exit right after launch. Use built-in apps such as Edge, cmd, PowerShell, Explorer and Registry Editor, or software you install yourself.
-- SendInput cannot reach the UAC or secure desktop (Ctrl+Alt+Del) screens. Since the agent is already elevated, ordinary installs don't show a UAC prompt.
+- The agent runs on the `Default` desktop, so by itself it cannot reach the UAC prompt, the lock screen or the Ctrl+Alt+Del screen. The SYSTEM secure-desktop helper handles those — see "Secure desktop" above. With the default `EnableLUA=0` the agent is already elevated and ordinary installs show no UAC prompt at all.
 - Some apps, such as WinForms apps, expose UIA ControlType as `Pane` and leave AutomationId empty. If `-type`/`-id` finds nothing, search by `-name` alone, and check the real structure with `ui_tree` first.
 - `exec` is processed sequentially. Other requests wait while it runs, so run anything that takes more than a few minutes with `job_start` and observe the screen in the meantime.
 - The bridge folder is `%USERPROFILE%\WinSandboxBridge` and can be changed with the `SBX_BRIDGE` environment variable. **Do not put it under AppData.** In MSIX-packaged apps such as Claude Desktop, AppData writes are redirected to the package folder, and the sandbox fails with `0x80070003 The system cannot find the path specified`.

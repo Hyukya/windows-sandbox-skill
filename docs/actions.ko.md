@@ -21,6 +21,15 @@
 | `push` | `-src 호스트경로 -dst 샌드박스경로` | 파일/폴더를 샌드박스로 복사 |
 | `pull` | `-src 샌드박스경로 -dst 호스트경로` | 파일/폴더를 호스트로 복사 |
 | `call` | `call <action> -paramsJson ...` | 임의 에이전트 액션 호출 |
+| `secure-shot` | `-name` | **현재 입력 데스크톱**(UAC/잠금/Ctrl+Alt+Del 포함) 전체 화면 캡처. `file, hostPath, desktop` |
+| `secure-click` | `-x* -y*`, `-button`, `-count` | 현재 입력 데스크톱에 클릭 |
+| `secure-type` | `-text*` | 현재 입력 데스크톱에 유니코드 입력 |
+| `secure-keys` | `-keys*`, `-repeat`, `-delay` | 현재 입력 데스크톱에 키 입력(`ctrl+alt+del` 형식) |
+| `secure-move` | `-x* -y*` | 현재 입력 데스크톱에서 커서 이동 |
+| `secure-desktop` | | 현재 입력 데스크톱 이름(`Default`, `Winlogon` 등) |
+| `secure-sas` | `-asUser` | 보안 주의 시퀀스 전송(Ctrl+Alt+Del 화면 열기) |
+
+`secure-*` 호스트 액션은 에이전트를 거치지 않고 SYSTEM 도우미와 **직접** 통신한다. UAC 창이 떠 있을 때는 에이전트가 블로킹되므로(그 `launch`/`exec`가 응답을 기다림) 이 직접 경로를 쓴다.
 
 ## 에이전트 액션 (샌드박스 내부)
 
@@ -87,6 +96,18 @@
 | `delete` | `path`* | 재귀 삭제 |
 | `clipboard_get` / `clipboard_set` | `text` | 샌드박스 클립보드 |
 
+### 보안 데스크톱 (UAC / 잠금 화면 / Ctrl+Alt+Del)
+SYSTEM 도우미(예약 작업 `SbxSecure`, **관리자 상태**의 샌드박스 시작 시 자동 상주, AtStartup 트리거로 재부팅에도 유지)가 대화형 세션에서 돌며, 현재 활성 데스크톱이 무엇이든 캡처/클릭/입력한다 — 에이전트 자신은 닿지 못하는 보안 데스크톱까지. 위의 호스트 직접 `secure-*` 액션으로 구동하거나(프롬프트가 에이전트를 막을 때 권장), 에이전트 자동 라우팅에 맡긴다(입력 데스크톱이 `Default`가 아니면 `screenshot`/`click`/`type`/`keys`가 도우미로 자동 전달; `-secure`로 강제, `-direct`로 직접 경로 유지).
+
+| 액션 | 파라미터 | 설명 |
+|---|---|---|
+| `uac` | `mode off\|prompt\|desktop\|allow`(기본 `prompt`), `reboot true` | UAC 정책 설정 후 `EnableLUA`가 바뀌면 재부팅(도우미는 AtStartup으로 재상주). `off`=샌드박스 기본(완전 상승, 프롬프트 없음), `prompt`=보안 데스크톱의 실제 UAC, `desktop`=일반 데스크톱의 UAC(에이전트가 직접 클릭), `allow`=프롬프트 없이 상승. **관리자 에이전트 필요**(새 부팅), UAC를 올리기 전에 실행. `rebootRequired/rebooting` 반환 |
+| `secure_status` | | `armed, task, inputDesktop, elevated, helper{pid,desktop,...}` |
+| `secure_arm` | | 도우미 재등록/재시작(멱등, 등록엔 관리자 권한 필요) |
+| `secure_sas` | `asUser` | SYSTEM에서 보안 주의 시퀀스 전송(Ctrl+Alt+Del 화면) |
+
+실제 UAC 창을 누르는 전형적 흐름: `uac -mode prompt`(재부팅) → 상승하는 설치 프로그램/앱 실행 → `secure-shot`으로 창 확인 → **예/Yes**에 `secure-click -x -y`. 기본 샌드박스는 `EnableLUA=0`이라 설치가 조용히 자동 상승하므로, `prompt`/`desktop` 모드로 바꾸지 않으면 창이 뜨지 않는다.
+
 ### 에이전트 수명
 | 액션 | 설명 |
 |---|---|
@@ -95,4 +116,4 @@
 | `shutdown` | 응답 후 게스트 OS 종료 → 샌드박스 창 닫힘 (`stop`이 사용) |
 
 ## 브리지 폴더 구조 (호스트 `%USERPROFILE%\WinSandboxBridge` = 샌드박스 `C:\Bridge`)
-`agent\`(코드) `inbox\` `outbox\` `shots\`(스크린샷) `files\`(전송 스테이징, 자유 사용) `jobs\`(작업 출력) `logs\` `status.json`(2초마다 하트비트) `sandbox.wsb`(마지막 실행 설정).
+`agent\`(코드) `inbox\` `outbox\` `shots\`(스크린샷) `files\`(전송 스테이징, 자유 사용) `jobs\`(작업 출력) `logs\` `secure\`(보안 도우미: `inbox\` `outbox\` `shots\` `secure.status.json` 하트비트) `status.json`(2초마다 하트비트) `sandbox.wsb`(마지막 실행 설정).

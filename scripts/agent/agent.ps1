@@ -26,6 +26,17 @@ if (-not ('SbxNative' -as [type])) { Add-Type -TypeDefinition $nativeSrc -Langua
 [SbxNative]::MakeDpiAware()
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName System.Windows.Forms
+# Secure-desktop support (UAC / lock screen / Ctrl+Alt+Del). Loaded for input-desktop detection
+# and for arming the SYSTEM helper; see secure-agent.ps1 / secure-broker.ps1.
+$secureSrc = Join-Path $PSScriptRoot 'secure.cs'
+if ((Test-Path $secureSrc) -and -not ('SbxSecure' -as [type])) {
+    try { Add-Type -TypeDefinition ([IO.File]::ReadAllText($secureSrc)) -ReferencedAssemblies System.Drawing } catch {}
+}
+$script:IsElevated = $false
+try {
+    $wi = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $script:IsElevated = (New-Object Security.Principal.WindowsPrincipal $wi).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+} catch {}
 $script:UiaLoaded = $false
 function Use-Uia {
     if (-not $script:UiaLoaded) {
@@ -487,8 +498,127 @@ function Get-SysInfo {
         psVersion = $PSVersionTable.PSVersion.ToString(); screen = (Get-ScreenInfo); bridge = $Bridge }
 }
 
+# ---------------------------------------------------------------- secure desktop
+$SecureDir = Join-Path $Bridge 'secure'
+$PolicyKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+
+function Get-InputDesktopName {
+    if (-not ('SbxSecure' -as [type])) { return 'Default' }
+    try { $n = [SbxSecure]::InputDesktop(); if ($n) { return $n } } catch {}
+    return 'Default'
+}
+function Test-SecureHelperAlive {
+    $beat = Join-Path $SecureDir 'secure.status.json'
+    if (-not (Test-Path $beat)) { return $false }
+    try { $s = [IO.File]::ReadAllText($beat, $Utf8) | ConvertFrom-Json
+        return (([DateTime]::UtcNow - [DateTime]::Parse($s.time).ToUniversalTime()).TotalSeconds -lt 12) } catch { return $false }
+}
+# Route an input/capture op to the secure helper when the current input desktop is not Default
+# (UAC / lock / Ctrl+Alt+Del), unless the caller forces direct. Honours an explicit -secure flag.
+function Test-UseSecure($p) {
+    if (B (P $p 'direct' $false)) { return $false }
+    if (B (P $p 'secure' $false)) { return $true }
+    if ((Get-InputDesktopName) -ne 'Default') { return $true }
+    return $false
+}
+function Invoke-Secure($op, $params, [double]$timeoutSec = 15) {
+    if (-not (Test-SecureHelperAlive)) {
+        throw "Secure helper is not running. It must be armed while the agent is elevated (start/restart the sandbox, or run action 'secure_arm' before raising UAC). Input desktop is '$(Get-InputDesktopName)'."
+    }
+    $in = Join-Path $SecureDir 'inbox'; $out = Join-Path $SecureDir 'outbox'
+    foreach ($d in $in, $out) { if (-not (Test-Path $d)) { New-Item -ItemType Directory -Force $d | Out-Null } }
+    $sid = '{0:yyyyMMddHHmmssfff}_{1}' -f (Get-Date), ([guid]::NewGuid().ToString('N').Substring(0, 6))
+    $req = [ordered]@{ id = $sid; op = $op }
+    foreach ($k in $params.Keys) { $req[$k] = $params[$k] }
+    $tmp = Join-Path $in "$sid.tmp"
+    [IO.File]::WriteAllText($tmp, ($req | ConvertTo-Json -Compress -Depth 8), $Utf8)
+    Move-Item -LiteralPath $tmp -Destination (Join-Path $in "$sid.json") -Force
+    $outFile = Join-Path $out "$sid.json"
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    while ($sw.Elapsed.TotalSeconds -lt $timeoutSec) {
+        if (Test-Path -LiteralPath $outFile) {
+            Start-Sleep -Milliseconds 20
+            try { $txt = [IO.File]::ReadAllText($outFile, $Utf8) } catch { Start-Sleep -Milliseconds 40; continue }
+            Remove-Item -LiteralPath $outFile -Force -ErrorAction SilentlyContinue
+            $r = $txt | ConvertFrom-Json
+            if (-not $r.ok) { throw "secure helper: $($r.error)" }
+            return $r.result
+        }
+        Update-Heartbeat 'busy'; Start-Sleep -Milliseconds 60
+    }
+    throw "Timed out after $timeoutSec s waiting for secure helper op '$op'."
+}
+
+# Translate a space/plus key spec (e.g. 'ctrl+alt+del') to a flat VK array for one chord.
+function ConvertTo-VkArray([string]$keys) {
+    $out = New-Object System.Collections.Generic.List[int]
+    foreach ($combo in ($keys -split '\s+' | Where-Object { $_ -ne '' })) {
+        foreach ($v in (Get-Vks $combo)) { $out.Add([int]$v) }
+    }
+    return , $out.ToArray()
+}
+
+function Initialize-Secure {
+    # Idempotent. Registers + starts the SYSTEM helper task (AtStartup so it survives the reboot
+    # into UAC-enabled mode). Needs elevation; at Medium integrity it logs and relies on an
+    # existing AtStartup task from an earlier elevated boot.
+    $broker = Join-Path $PSScriptRoot 'secure-broker.ps1'
+    if (-not (Test-Path $broker)) { return @{ armed = $false; reason = 'secure-broker.ps1 missing' } }
+    $existing = $null; try { $existing = Get-ScheduledTask -TaskName 'SbxSecure' -ErrorAction SilentlyContinue } catch {}
+    if (-not $existing) {
+        if (-not $script:IsElevated) { Log 'secure: not elevated and no SbxSecure task; cannot arm'; return @{ armed = $false; reason = 'not elevated' } }
+        try {
+            $arg = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$broker`" -Bridge `"$Bridge`""
+            $act = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $arg
+            $pr = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+            $trg = New-ScheduledTaskTrigger -AtStartup
+            $set = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 5 -RestartInterval (New-TimeSpan -Minutes 1)
+            Register-ScheduledTask -TaskName 'SbxSecure' -Action $act -Principal $pr -Trigger $trg -Settings $set -Force | Out-Null
+            Log 'secure: registered SbxSecure task'
+        } catch { Log "secure: register failed: $($_.Exception.Message)"; return @{ armed = $false; reason = $_.Exception.Message } }
+    }
+    try { if (-not (Test-SecureHelperAlive)) { Start-ScheduledTask -TaskName 'SbxSecure' -ErrorAction Stop } } catch { Log "secure: start failed: $($_.Exception.Message)" }
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    while ($sw.Elapsed.TotalSeconds -lt 8 -and -not (Test-SecureHelperAlive)) { Start-Sleep -Milliseconds 300 }
+    return @{ armed = (Test-SecureHelperAlive); registered = $true }
+}
+
+function Get-SecureStatus {
+    $beat = Join-Path $SecureDir 'secure.status.json'; $s = $null
+    if (Test-Path $beat) { try { $s = [IO.File]::ReadAllText($beat, $Utf8) | ConvertFrom-Json } catch {} }
+    $task = $null; try { $task = (Get-ScheduledTask -TaskName 'SbxSecure' -ErrorAction SilentlyContinue).State } catch {}
+    return [ordered]@{ armed = (Test-SecureHelperAlive); alive = (Test-SecureHelperAlive); task = $task
+        inputDesktop = (Get-InputDesktopName); elevated = $script:IsElevated; helper = $s }
+}
+
+function Set-UacPolicy($p) {
+    if (-not $script:IsElevated) { throw "Setting UAC policy needs an elevated agent. Restart the sandbox (fresh boot is elevated) and run this before raising UAC." }
+    $mode = ([string](P $p 'mode' 'prompt')).ToLowerInvariant()
+    # mode -> EnableLUA, ConsentPromptBehaviorAdmin, PromptOnSecureDesktop
+    $cfg = switch ($mode) {
+        'off'     { @{ lua = 0; consent = 5; secure = 1 } }  # sandbox default: fully elevated, no prompts
+        'prompt'  { @{ lua = 1; consent = 5; secure = 1 } }  # real UAC on the secure desktop (helper handles it)
+        'desktop' { @{ lua = 1; consent = 5; secure = 0 } }  # UAC on the normal desktop (agent clicks directly)
+        'allow'   { @{ lua = 1; consent = 0; secure = 0 } }  # elevate without prompting, UAC subsystem on
+        default   { throw "Unknown uac mode '$mode' (off|prompt|desktop|allow)" }
+    }
+    $before = (Get-ItemProperty $PolicyKey).EnableLUA
+    Set-ItemProperty $PolicyKey -Name EnableLUA -Value $cfg.lua -Type DWord
+    Set-ItemProperty $PolicyKey -Name ConsentPromptBehaviorAdmin -Value $cfg.consent -Type DWord
+    Set-ItemProperty $PolicyKey -Name PromptOnSecureDesktop -Value $cfg.secure -Type DWord
+    $needReboot = ($before -ne $cfg.lua)
+    $res = [ordered]@{ mode = $mode; enableLua = $cfg.lua; consentPromptBehaviorAdmin = $cfg.consent; promptOnSecureDesktop = $cfg.secure; rebootRequired = $needReboot }
+    if ($needReboot -and (B (P $p 'reboot' $true))) {
+        if ($mode -ne 'off') { try { Initialize-Secure | Out-Null } catch {} }  # ensure AtStartup helper survives the reboot
+        $res.rebooting = $true
+        $script:PendingReboot = $true
+    }
+    return $res
+}
+
 # ---------------------------------------------------------------- dispatch
 $script:ExitCode = $null
+$script:PendingReboot = $false
 function Invoke-Action($req) {
     $p = $req.params; $id = [string]$req.id
     switch ([string]$req.action) {
@@ -511,10 +641,24 @@ function Invoke-Action($req) {
             return @{ pid = $pr.Id; name = $pr.ProcessName }
         }
         'screen' { return (Get-ScreenInfo) }
-        'screenshot' { return (Save-Screenshot $p $id) }
+        'screenshot' {
+            if (Test-UseSecure $p) {
+                $r = Invoke-Secure 'shot' @{ name = ([string](P $p 'name' "sec_$id.png")) }
+                $r | Add-Member -NotePropertyName via -NotePropertyValue 'secure' -Force
+                $r | Add-Member -NotePropertyName note -NotePropertyValue 'Captured on the secure desktop (full screen; scale/region/cursor options are ignored).' -Force
+                return $r
+            }
+            return (Save-Screenshot $p $id)
+        }
         'cursor' { return (Get-Cursor) }
-        'move' { Move-Mouse ([int](Need $p 'x')) ([int](Need $p 'y')) ([int](P $p 'steps' 0)) ([int](P $p 'duration' 0)); return @{ cursor = (Get-Cursor) } }
-        'click' { return (Invoke-Click $p) }
+        'move' {
+            if (Test-UseSecure $p) { return (Invoke-Secure 'move' @{ x = [int](Need $p 'x'); y = [int](Need $p 'y') }) }
+            Move-Mouse ([int](Need $p 'x')) ([int](Need $p 'y')) ([int](P $p 'steps' 0)) ([int](P $p 'duration' 0)); return @{ cursor = (Get-Cursor) }
+        }
+        'click' {
+            if (Test-UseSecure $p) { return (Invoke-Secure 'click' @{ x = [int](Need $p 'x'); y = [int](Need $p 'y'); button = ([string](P $p 'button' 'left')); count = ([int]$(if (B (P $p 'double' $false)) { 2 } else { P $p 'count' 1 })) }) }
+            return (Invoke-Click $p)
+        }
         'mouse_down' { if ($null -ne (P $p 'x')) { Move-Mouse ([int]$p.x) ([int]$p.y) }; [SbxNative]::MouseButton([string](P $p 'button' 'left'), $true); return @{ cursor = (Get-Cursor) } }
         'mouse_up' { if ($null -ne (P $p 'x')) { Move-Mouse ([int]$p.x) ([int]$p.y) }; [SbxNative]::MouseButton([string](P $p 'button' 'left'), $false); return @{ cursor = (Get-Cursor) } }
         'drag' { return (Invoke-Drag $p) }
@@ -522,10 +666,29 @@ function Invoke-Action($req) {
             if ($null -ne (P $p 'x')) { Move-Mouse ([int]$p.x) ([int]$p.y); Start-Sleep -Milliseconds 30 }
             [SbxNative]::Wheel([int](P $p 'clicks' -3), (B (P $p 'horizontal' $false))); return @{ cursor = (Get-Cursor); clicks = [int](P $p 'clicks' -3) }
         }
-        'type' { $t = [string](Need $p 'text'); [SbxNative]::TypeText($t, [int](P $p 'delay' 0)); return @{ typed = $t.Length } }
-        'keys' { return (Invoke-Keys $p) }
+        'type' {
+            $t = [string](Need $p 'text')
+            if (Test-UseSecure $p) { return (Invoke-Secure 'type' @{ text = $t }) }
+            [SbxNative]::TypeText($t, [int](P $p 'delay' 0)); return @{ typed = $t.Length }
+        }
+        'keys' {
+            if (Test-UseSecure $p) {
+                $keys = [string](Need $p 'keys'); $sent = @()
+                for ($r = 0; $r -lt [int](P $p 'repeat' 1); $r++) {
+                    foreach ($combo in ($keys -split '\s+' | Where-Object { $_ -ne '' })) {
+                        Invoke-Secure 'key' @{ vks = (Get-Vks $combo | ForEach-Object { [int]$_ }) } | Out-Null; $sent += $combo
+                    }
+                }
+                return @{ sent = $sent; via = 'secure' }
+            }
+            return (Invoke-Keys $p)
+        }
         'key_down' { return (Invoke-KeyState $p $true) }
         'key_up' { return (Invoke-KeyState $p $false) }
+        'secure_arm' { return (Initialize-Secure) }
+        'secure_status' { return (Get-SecureStatus) }
+        'secure_sas' { return (Invoke-Secure 'sas' @{ asUser = (B (P $p 'asUser' $false)) }) }
+        'uac' { return (Set-UacPolicy $p) }
         'windows' { return @{ windows = @(Find-Windows $p) } }
         'window' { return (Invoke-WindowOp $p) }
         'wait_window' { return (Wait-Window $p) }
@@ -570,8 +733,11 @@ function Invoke-Action($req) {
 }
 
 # ---------------------------------------------------------------- main loop
-Log "agent $AgentVersion started pid=$PID user=$env:USERNAME bridge=$Bridge"
+Log "agent $AgentVersion started pid=$PID user=$env:USERNAME bridge=$Bridge elevated=$script:IsElevated"
 Update-Heartbeat 'idle' -Force
+# Arm the secure-desktop helper (best-effort; needs elevation to register, which the default
+# sandbox boot has). An AtStartup trigger keeps it running after a reboot into UAC-enabled mode.
+try { $armRes = Initialize-Secure; Log "secure arm: $($armRes | ConvertTo-Json -Compress)" } catch { Log "secure arm error: $($_.Exception.Message)" }
 # The mapped folder is served over vSMB: plain polling sees new files only after the SMB directory
 # cache expires (~10-20 s). An active change-notify watcher invalidates that cache, so new requests
 # are seen in milliseconds. WaitForChanged doubles as the idle sleep.
@@ -603,6 +769,11 @@ while ($true) {
         $resp.ms = $sw.ElapsedMilliseconds
         try { Write-JsonFile (Join-Path $Dirs.outbox "$id.json") $resp } catch { Log "WRITE FAIL $id $($_.Exception.Message)" }
         Remove-Item -LiteralPath $work -Force -ErrorAction SilentlyContinue
+        if ($script:PendingReboot) {
+            Log 'uac policy change: rebooting'
+            Update-Heartbeat 'stopped' -Force
+            Start-Sleep -Milliseconds 500; & shutdown.exe /r /t 1 /f; exit 0
+        }
         if ($null -ne $script:ExitCode) {
             Log "exit requested code=$($script:ExitCode)"
             Update-Heartbeat 'stopped' -Force
