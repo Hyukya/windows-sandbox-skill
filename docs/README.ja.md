@@ -20,6 +20,7 @@ host: sbx.ps1 ──JSON──▶ %USERPROFILE%\WinSandboxBridge ═(mapped fold
 | キーボード | `type`(Unicode を直接入力するため日本語・韓国語・絵文字も可)、`keys`(`ctrl+shift+esc`、連続入力)、`key_down` `key_up` |
 | ウィンドウ | `windows` `foreground` `window`(focus/minimize/maximize/restore/close/move) `wait_window` |
 | UI Automation | `ui_tree` `ui_find` `ui_invoke` `ui_set_value` |
+| セキュア デスクトップ | `uac`（プロンプト モード）、`secure-shot` `secure-click` `secure-type` `secure-keys` `secure-sas` — UAC プロンプト・ロック画面・Ctrl+Alt+Del をキャプチャしてクリック |
 | ファイル・クリップボード | `push` `pull` `ls` `read_text` `write_text` `copy` `delete` `clipboard_get` `clipboard_set` |
 
 すべてのパラメーターは [アクションリファレンス](actions.ja.md)を参照してください。
@@ -71,7 +72,7 @@ $SBX stop
 ## 既知の制限
 
 - サンドボックスには Store アプリ(新しいメモ帳、電卓、ペイント、ターミナル)がありません。Edge、cmd、PowerShell、または自分でインストールしたソフトウェアを使ってください。
-- UAC のセキュリティで保護されたデスクトップや Ctrl+Alt+Del 画面には入力を送れません。
+- エージェントは通常のデスクトップで動くため、UAC プロンプト・ロック画面・Ctrl+Alt+Del（隔離されたセキュア デスクトップ）には直接届きません。起動時に自動常駐する SYSTEM ヘルパーが `uac`・`secure-*` アクションでこれらを操作します（[SKILL.md](../SKILL.md#secure-desktop-uac-lock-screen-ctrlaltdel) 参照）。既定では自動的に昇格するため、モードを切り替えない限り UAC プロンプト自体が出ません。
 - サンドボックスのウィンドウを最小化すると、描画と入力が止まることがあります。
 - Windows サンドボックスは同時に 1 つしか実行できません。
 - ブリッジフォルダー(`SBX_BRIDGE`)を AppData 配下に置かないでください。MSIX パッケージ化されたアプリから実行すると AppData への書き込みがリダイレクトされ、サンドボックスが `0x80070003`(パスが見つかりません)で失敗します。

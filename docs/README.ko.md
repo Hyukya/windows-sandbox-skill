@@ -20,6 +20,7 @@ host: sbx.ps1 ──JSON──▶ %USERPROFILE%\WinSandboxBridge ═(mapped fold
 | 키보드 | `type`(유니코드 직접 입력이라 한글·한자·이모지도 됨), `keys`(`ctrl+shift+esc`, 순차 입력), `key_down` `key_up` |
 | 창 | `windows` `foreground` `window`(focus/minimize/maximize/restore/close/move) `wait_window` |
 | UI Automation | `ui_tree` `ui_find` `ui_invoke` `ui_set_value` |
+| 보안 데스크톱 | `uac`(프롬프트 모드), `secure-shot` `secure-click` `secure-type` `secure-keys` `secure-sas` — UAC 창·잠금 화면·Ctrl+Alt+Del을 캡처하고 클릭 |
 | 파일·클립보드 | `push` `pull` `ls` `read_text` `write_text` `copy` `delete` `clipboard_get` `clipboard_set` |
 
 전체 파라미터는 [액션 레퍼런스](actions.ko.md)를 참고하세요.
@@ -71,7 +72,7 @@ $SBX stop
 ## 알려진 제약
 
 - 샌드박스에는 Store 앱(새 메모장, 계산기, 그림판, 터미널)이 없습니다. Edge, cmd, PowerShell 또는 직접 설치한 프로그램을 사용하세요.
-- UAC 보안 데스크톱이나 Ctrl+Alt+Del 화면에는 입력을 보낼 수 없습니다.
+- 에이전트는 일반 데스크톱에서 돌기 때문에 UAC 창·잠금 화면·Ctrl+Alt+Del(격리된 보안 데스크톱)에는 직접 닿지 못합니다. 시작 시 자동으로 상주하는 SYSTEM 도우미가 `uac`·`secure-*` 액션으로 이를 처리합니다 — [SKILL.md](../SKILL.md#secure-desktop-uac-lock-screen-ctrlaltdel) 참고. 기본값은 자동 권한 상승이라, 모드를 켜지 않으면 UAC 창 자체가 뜨지 않습니다.
 - 샌드박스 창을 최소화하면 화면 렌더링과 입력이 멈출 수 있습니다.
 - Windows Sandbox는 한 번에 하나만 실행할 수 있습니다.
 - 브리지 폴더(`SBX_BRIDGE`)를 AppData 아래에 두지 마세요. MSIX로 패키징된 앱에서 실행하면 AppData 쓰기가 리디렉션되어 샌드박스가 `0x80070003`(경로를 찾을 수 없음)으로 실패합니다.

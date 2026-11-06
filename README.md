@@ -20,6 +20,7 @@ host: sbx.ps1 ──JSON──▶ %USERPROFILE%\WinSandboxBridge ═(mapped fold
 | Keyboard | `type` (direct Unicode input, so Korean, CJK and emoji work), `keys` (`ctrl+shift+esc`, key sequences), `key_down` `key_up` |
 | Windows | `windows` `foreground` `window` (focus/minimize/maximize/restore/close/move) `wait_window` |
 | UI Automation | `ui_tree` `ui_find` `ui_invoke` `ui_set_value` |
+| Secure desktop | `uac` (prompt mode), `secure-shot` `secure-click` `secure-type` `secure-keys` `secure-sas` — screenshot and click the UAC prompt, lock screen and Ctrl+Alt+Del |
 | Files & clipboard | `push` `pull` `ls` `read_text` `write_text` `copy` `delete` `clipboard_get` `clipboard_set` |
 
 See [references/actions.md](references/actions.md) for every parameter.
@@ -71,7 +72,7 @@ Output is always a single JSON object (`{"ok":true,"result":{...}}`).
 ## Known limitations
 
 - The sandbox has no Store apps (new Notepad, Calculator, Paint, Terminal). Use Edge, cmd, PowerShell or software you install yourself.
-- Input cannot reach the UAC secure desktop or the Ctrl+Alt+Del screen.
+- The agent itself runs on the normal desktop; the UAC prompt, lock screen and Ctrl+Alt+Del live on the isolated secure desktop. A SYSTEM helper (armed automatically at startup) reaches them through the `uac` and `secure-*` actions — see [SKILL.md](SKILL.md#secure-desktop-uac-lock-screen-ctrlaltdel). By default the sandbox auto-elevates, so no UAC prompt appears unless you switch it on.
 - Minimizing the sandbox window may pause rendering and input.
 - Only one Windows Sandbox instance can run at a time.
 - Do not put the bridge folder (`SBX_BRIDGE`) under AppData. When run from an MSIX-packaged app, AppData writes are redirected, and the sandbox fails with `0x80070003` (path not found).

@@ -21,6 +21,15 @@
 | `push` | `-src 主机路径 -dst 沙盒路径` | 把文件/文件夹复制到沙盒 |
 | `pull` | `-src 沙盒路径 -dst 主机路径` | 把文件/文件夹复制到主机 |
 | `call` | `call <action> -paramsJson ...` | 调用任意代理操作 |
+| `secure-shot` | `-name` | **当前输入桌面**（含 UAC/锁屏/Ctrl+Alt+Del）全屏截图。`file, hostPath, desktop` |
+| `secure-click` | `-x* -y*`、`-button`、`-count` | 在当前输入桌面点击 |
+| `secure-type` | `-text*` | 在当前输入桌面输入 Unicode 文本 |
+| `secure-keys` | `-keys*`、`-repeat`、`-delay` | 在当前输入桌面发送按键（`ctrl+alt+del` 形式） |
+| `secure-move` | `-x* -y*` | 在当前输入桌面移动光标 |
+| `secure-desktop` | | 当前输入桌面名称（`Default`、`Winlogon` 等） |
+| `secure-sas` | `-asUser` | 发送安全注意序列（打开 Ctrl+Alt+Del 界面） |
+
+`secure-*` 主机操作绕过代理，**直接**与 SYSTEM 助手通信。当 UAC 提示出现时代理会被阻塞（其 `launch`/`exec` 在等待提示被应答），因此使用此直接通道。
 
 ## 代理操作（沙盒内部）
 
@@ -93,6 +102,18 @@
 | `restart_agent` | 退出码 0 → 启动器重启代理（重新加载代码） |
 | `stop_agent` | 退出码 99 → 启动器也退出（沙盒保持运行） |
 | `shutdown` | 响应后关闭客户机操作系统 → 沙盒窗口关闭（`stop` 使用） |
+
+### 安全桌面（UAC / 锁屏 / Ctrl+Alt+Del）
+SYSTEM 助手（计划任务 `SbxSecure`，在**提权的**沙盒启动时自动驻留，AtStartup 触发器使其在重启后仍存活）运行于交互会话，可对当前活动的任何桌面截图/点击/输入——包括代理自身无法触达的安全桌面。用上面的主机直连 `secure-*` 操作驱动它（当提示阻塞代理时推荐），或交给代理自动路由（输入桌面不是 `Default` 时 `screenshot`/`click`/`type`/`keys` 自动转给助手；`-secure` 强制，`-direct` 保持直接路径）。
+
+| 操作 | 参数 | 说明 |
+|---|---|---|
+| `uac` | `mode off\|prompt\|desktop\|allow`（默认 `prompt`）、`reboot true` | 设置 UAC 策略，若 `EnableLUA` 改变则重启（助手通过 AtStartup 重新驻留）。`off`=沙盒默认（完全提权、无提示），`prompt`=安全桌面上的真实 UAC，`desktop`=普通桌面上的 UAC（代理直接点击），`allow`=不提示直接提权。**需要提权的代理**（全新启动），在触发 UAC 前运行。返回 `rebootRequired/rebooting` |
+| `secure_status` | | `armed, task, inputDesktop, elevated, helper{pid,desktop,...}` |
+| `secure_arm` | | 重新注册/重启助手（幂等，注册需提权） |
+| `secure_sas` | `asUser` | 从 SYSTEM 发送安全注意序列（Ctrl+Alt+Del 界面） |
+
+点击真实 UAC 提示的典型流程：`uac -mode prompt`（重启）→ 运行会提权的安装程序/应用 → `secure-shot` 查看提示 → 对 **是/Yes** 执行 `secure-click -x -y`。默认沙盒为 `EnableLUA=0`，安装会静默自动提权，除非切换到 `prompt`/`desktop` 模式，否则不会出现提示。
 
 ## 桥接文件夹结构（主机 `%USERPROFILE%\WinSandboxBridge` = 沙盒 `C:\Bridge`）
 `agent\`（代码） `inbox\` `outbox\` `shots\`（截图） `files\`（传输暂存区，可自由使用） `jobs\`（作业输出） `logs\` `status.json`（每 2 秒一次心跳） `sandbox.wsb`（上次启动的配置）。

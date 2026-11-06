@@ -20,6 +20,7 @@ host: sbx.ps1 ──JSON──▶ %USERPROFILE%\WinSandboxBridge ═(mapped fold
 | 键盘 | `type`（直接输入 Unicode，中文、韩文、表情符号均可），`keys`（`ctrl+shift+esc`、按键序列），`key_down` `key_up` |
 | 窗口 | `windows` `foreground` `window`（focus/minimize/maximize/restore/close/move） `wait_window` |
 | UI 自动化 | `ui_tree` `ui_find` `ui_invoke` `ui_set_value` |
+| 安全桌面 | `uac`（提示模式）、`secure-shot` `secure-click` `secure-type` `secure-keys` `secure-sas` — 截图并点击 UAC 提示、锁屏和 Ctrl+Alt+Del |
 | 文件与剪贴板 | `push` `pull` `ls` `read_text` `write_text` `copy` `delete` `clipboard_get` `clipboard_set` |
 
 全部参数请参阅 [操作参考](actions.zh-CN.md)。
@@ -71,7 +72,7 @@ $SBX stop
 ## 已知限制
 
 - 沙盒中没有应用商店应用（新版记事本、计算器、画图、终端）。请使用 Edge、cmd、PowerShell 或自行安装的软件。
-- 无法向 UAC 安全桌面或 Ctrl+Alt+Del 界面发送输入。
+- 代理运行在普通桌面上，因此无法直接触达 UAC 提示、锁屏或 Ctrl+Alt+Del（隔离的安全桌面）。启动时自动驻留的 SYSTEM 助手通过 `uac`、`secure-*` 操作来处理它们（见 [SKILL.md](../SKILL.md#secure-desktop-uac-lock-screen-ctrlaltdel)）。默认自动提权，除非切换模式，否则根本不会出现 UAC 提示。
 - 最小化沙盒窗口可能会暂停渲染和输入。
 - 同一时间只能运行一个 Windows 沙盒实例。
 - 不要将桥接文件夹（`SBX_BRIDGE`）放在 AppData 下。从 MSIX 打包的应用中运行时，对 AppData 的写入会被重定向，沙盒将以 `0x80070003`（找不到路径）失败。
