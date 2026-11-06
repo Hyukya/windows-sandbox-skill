@@ -21,7 +21,7 @@ host: sbx.ps1 ──JSON──▶ %USERPROFILE%\WinSandboxBridge ═(mapped fold
 | UI 自动化 | `ui_tree` `ui_find` `ui_invoke` `ui_set_value` |
 | 文件与剪贴板 | `push` `pull` `ls` `read_text` `write_text` `copy` `delete` `clipboard_get` `clipboard_set` |
 
-全部参数请参阅 [references/actions.md](../references/actions.md)（韩文）。
+全部参数请参阅 [操作参考](actions.zh-CN.md)。
 
 ## 系统要求
 
