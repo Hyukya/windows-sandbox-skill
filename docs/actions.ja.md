@@ -111,7 +111,7 @@ SYSTEM ヘルパー(スケジュール タスク `SbxSecure`、**昇格した**�
 | アクション | パラメータ | 説明 |
 |---|---|---|
 | `uac` | `mode off\|prompt\|desktop\|allow`(既定 `prompt`)、`reboot true` | UAC ポリシーを設定し、`EnableLUA` が変われば再起動(ヘルパーは AtStartup で再常駐)。`off`=サンドボックス既定(完全昇格・プロンプトなし)、`prompt`=セキュア デスクトップの実 UAC、`desktop`=通常デスクトップの UAC(エージェントが直接クリック)、`allow`=プロンプトなしで昇格。**昇格したエージェントが必要**(新規起動)、UAC を上げる前に実行。`rebootRequired/rebooting` を返す |
-| `secure_status` | | `armed, task, inputDesktop, elevated, helper{pid,desktop,...}` |
+| `secure_status` | | `armed, task, inputDesktop, elevated, helper{pid,desktop,...}`。セキュアデスクトップ表示中に helper が動いていなければ `inputDesktop` は `Unknown` |
 | `secure_arm` | | ヘルパーを再登録/再起動(冪等、登録には昇格が必要) |
 | `secure_sas` | `asUser` | SYSTEM からセキュア アテンション シーケンス送信(Ctrl+Alt+Del 画面) |
 

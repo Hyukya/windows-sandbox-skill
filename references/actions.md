@@ -104,7 +104,7 @@ A SYSTEM helper (scheduled task `SbxSecure`, armed automatically at an **elevate
 | Action | Parameters | Description |
 |---|---|---|
 | `uac` | `mode off\|prompt\|desktop\|allow` (default `prompt`), `reboot true` | Sets the UAC policy, then reboots if `EnableLUA` changed (helper re-arms via AtStartup). `off` = sandbox default (fully elevated, no prompts); `prompt` = real UAC on the secure desktop; `desktop` = UAC on the normal desktop (agent clicks it directly); `allow` = elevate without prompting. **Needs an elevated agent** (fresh boot); run it before raising UAC. Returns `rebootRequired/rebooting` |
-| `secure_status` | | `armed, task, inputDesktop, elevated, helper{pid,desktop,...}` |
+| `secure_status` | | `armed, task, inputDesktop, elevated, helper{pid,desktop,...}`. `inputDesktop` is `Unknown` when a secure desktop is up and the helper is not running |
 | `secure_arm` | | Re-registers / restarts the helper (idempotent; needs elevation to register) |
 | `secure_sas` | `asUser` | Sends the Secure Attention Sequence from SYSTEM (Ctrl+Alt+Del screen) |
 

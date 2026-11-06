@@ -21,6 +21,13 @@ if (-not ('SbxSecure' -as [type])) { Add-Type -TypeDefinition $src -ReferencedAs
 
 $id = [Security.Principal.WindowsIdentity]::GetCurrent().Name
 $sess = (Get-Process -Id $PID).SessionId
+
+# One helper only. The broker re-spawns whenever the heartbeat looks stale (e.g. a slow first
+# Add-Type), and duplicates used to pile up and overwrite each other's heartbeat.
+$script:Mutex = New-Object System.Threading.Mutex($false, 'Global\SbxSecureHelper')
+$owned = $false
+try { $owned = $script:Mutex.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $owned = $true }
+if (-not $owned) { Log "helper pid $PID exiting: another helper holds the mutex"; exit 0 }
 Log "helper up as $id session $sess pid $PID"
 
 # Minimal key map so the helper can parse 'ctrl+alt+del' style specs on its own (independent of

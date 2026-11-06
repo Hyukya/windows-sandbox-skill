@@ -24,7 +24,7 @@ function Out-Json($obj, [int]$code = 0) {
 }
 function Fail([string]$msg, $extra = $null) {
     $o = [ordered]@{ ok = $false; error = $msg }
-    if ($extra) { foreach ($k in $extra.Keys) { $o[$k] = $extra[$k] } }
+    if ($extra) { foreach ($k in $extra.PSBase.Keys) { $o[$k] = $extra[$k] } }
     Out-Json $o 1
 }
 
@@ -54,11 +54,12 @@ function Convert-Value($v) {
 # -paramsJson / -paramsFile merge raw JSON; -xxxFile reads text into xxx (textFile, commandFile, valueFile)
 if ($Params.Contains('paramsJson')) { ($Params.paramsJson | ConvertFrom-Json).PSObject.Properties | ForEach-Object { $Params[$_.Name] = $_.Value }; $Params.Remove('paramsJson') }
 if ($Params.Contains('paramsFile')) { ([IO.File]::ReadAllText($Params.paramsFile, $Utf8) | ConvertFrom-Json).PSObject.Properties | ForEach-Object { $Params[$_.Name] = $_.Value }; $Params.Remove('paramsFile') }
-foreach ($k in @($Params.Keys)) {
+# .PSBase.Keys: a parameter literally named "keys" (keys/secure-keys) would shadow .Keys.
+foreach ($k in @($Params.PSBase.Keys)) {
     if ($k -in 'textFile', 'commandFile', 'valueFile') { $Params[$k -replace 'File$', ''] = [IO.File]::ReadAllText([string]$Params[$k], $Utf8); $Params.Remove($k) }
 }
 $StringKeys = 'text', 'command', 'value', 'title', 'name', 'keys', 'path', 'src', 'dst', 'cwd', 'id', 'process', 'class', 'type', 'args', 'modifiers', 'sandboxPath', 'entry', 'as'
-foreach ($k in @($Params.Keys)) { if ($k -notin $StringKeys) { $Params[$k] = Convert-Value $Params[$k] } }
+foreach ($k in @($Params.PSBase.Keys)) { if ($k -notin $StringKeys) { $Params[$k] = Convert-Value $Params[$k] } }
 
 function Get-Param([string]$name, $default = $null) { if ($Params.Contains($name)) { return $Params[$name] }; return $default }
 
@@ -124,9 +125,12 @@ function Add-HostPaths($resp) {
 # so the agent cannot drive the very prompt you need to click. The helper is a separate process.
 function Test-SecureAlive {
     $beat = Join-Path $Bridge 'secure\secure.status.json'
-    if (-not (Test-Path $beat)) { return $false }
-    try { $s = [IO.File]::ReadAllText($beat, $Utf8) | ConvertFrom-Json
-        return (([DateTime]::UtcNow - [DateTime]::Parse($s.time).ToUniversalTime()).TotalSeconds -lt 12) } catch { return $false }
+    for ($i = 0; $i -lt 5; $i++) {   # retry: a read can collide with the helper replacing the file
+        if (-not (Test-Path $beat)) { return $false }
+        try { $s = [IO.File]::ReadAllText($beat, $Utf8) | ConvertFrom-Json
+            return (([DateTime]::UtcNow - [DateTime]::Parse($s.time).ToUniversalTime()).TotalSeconds -lt 12) } catch { Start-Sleep -Milliseconds 50 }
+    }
+    return $false
 }
 function Send-Secure([string]$op, $params, [double]$waitSec = 20) {
     $secDir = Join-Path $Bridge 'secure'
@@ -137,7 +141,7 @@ function Send-Secure([string]$op, $params, [double]$waitSec = 20) {
     foreach ($d in $in, $out) { if (-not (Test-Path $d)) { New-Item -ItemType Directory -Force $d | Out-Null } }
     $sid = '{0:yyyyMMddHHmmssfff}_{1}' -f (Get-Date), ([guid]::NewGuid().ToString('N').Substring(0, 6))
     $req = [ordered]@{ id = $sid; op = $op }
-    foreach ($k in $params.Keys) { $req[$k] = $params[$k] }
+    foreach ($k in @($params.PSBase.Keys)) { $req[$k] = $params[$k] }
     $tmp = Join-Path $in "$sid.tmp"
     [IO.File]::WriteAllText($tmp, ($req | ConvertTo-Json -Compress -Depth 8), $Utf8)
     Move-Item -LiteralPath $tmp -Destination (Join-Path $in "$sid.json") -Force

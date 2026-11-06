@@ -111,7 +111,7 @@ SYSTEM 助手（计划任务 `SbxSecure`，在**提权的**沙盒启动时自动
 | 操作 | 参数 | 说明 |
 |---|---|---|
 | `uac` | `mode off\|prompt\|desktop\|allow`（默认 `prompt`）、`reboot true` | 设置 UAC 策略，若 `EnableLUA` 改变则重启（助手通过 AtStartup 重新驻留）。`off`=沙盒默认（完全提权、无提示），`prompt`=安全桌面上的真实 UAC，`desktop`=普通桌面上的 UAC（代理直接点击），`allow`=不提示直接提权。**需要提权的代理**（全新启动），在触发 UAC 前运行。返回 `rebootRequired/rebooting` |
-| `secure_status` | | `armed, task, inputDesktop, elevated, helper{pid,desktop,...}` |
+| `secure_status` | | `armed, task, inputDesktop, elevated, helper{pid,desktop,...}`。安全桌面显示时若 helper 未运行，`inputDesktop` 为 `Unknown` |
 | `secure_arm` | | 重新注册/重启助手（幂等，注册需提权） |
 | `secure_sas` | `asUser` | 从 SYSTEM 发送安全注意序列（Ctrl+Alt+Del 界面） |
 

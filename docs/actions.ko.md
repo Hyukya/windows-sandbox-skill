@@ -104,7 +104,7 @@ SYSTEM 도우미(예약 작업 `SbxSecure`, **관리자 상태**의 샌드박스
 | 액션 | 파라미터 | 설명 |
 |---|---|---|
 | `uac` | `mode off\|prompt\|desktop\|allow`(기본 `prompt`), `reboot true` | UAC 정책 설정 후 `EnableLUA`가 바뀌면 재부팅(도우미는 AtStartup으로 재상주). `off`=샌드박스 기본(완전 상승, 프롬프트 없음), `prompt`=보안 데스크톱의 실제 UAC, `desktop`=일반 데스크톱의 UAC(에이전트가 직접 클릭), `allow`=프롬프트 없이 상승. **관리자 에이전트 필요**(새 부팅), UAC를 올리기 전에 실행. `rebootRequired/rebooting` 반환 |
-| `secure_status` | | `armed, task, inputDesktop, elevated, helper{pid,desktop,...}` |
+| `secure_status` | | `armed, task, inputDesktop, elevated, helper{pid,desktop,...}`. 보안 데스크톱이 떠 있는데 helper가 없으면 `inputDesktop`은 `Unknown` |
 | `secure_arm` | | 도우미 재등록/재시작(멱등, 등록엔 관리자 권한 필요) |
 | `secure_sas` | `asUser` | SYSTEM에서 보안 주의 시퀀스 전송(Ctrl+Alt+Del 화면) |
 

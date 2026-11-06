@@ -15,9 +15,14 @@ if (-not ('SbxSecure' -as [type])) { Add-Type -TypeDefinition $src -ReferencedAs
 Log "broker up as $([Security.Principal.WindowsIdentity]::GetCurrent().Name) session $((Get-Process -Id $PID).SessionId)"
 
 function Test-HelperAlive {
-    if (-not (Test-Path $Beat)) { return $false }
-    try { $s = [IO.File]::ReadAllText($Beat, $Utf8) | ConvertFrom-Json
-        return (([DateTime]::UtcNow - [DateTime]::Parse($s.time).ToUniversalTime()).TotalSeconds -lt 10) } catch { return $false }
+    # A read can collide with the helper replacing the file; retry before calling it dead, since a
+    # false "dead" spawns a second helper.
+    for ($i = 0; $i -lt 5; $i++) {
+        if (-not (Test-Path $Beat)) { return $false }
+        try { $s = [IO.File]::ReadAllText($Beat, $Utf8) | ConvertFrom-Json
+            return (([DateTime]::UtcNow - [DateTime]::Parse($s.time).ToUniversalTime()).TotalSeconds -lt 10) } catch { Start-Sleep -Milliseconds 100 }
+    }
+    return $false
 }
 
 # The interactive sandbox session is 1 (WTSGetActiveConsoleSessionId returns -1 here).

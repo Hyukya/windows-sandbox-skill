@@ -581,13 +581,22 @@ $PolicyKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
 function Get-InputDesktopName {
     if (-not ('SbxSecure' -as [type])) { return 'Default' }
     try { $n = [SbxSecure]::InputDesktop(); if ($n) { return $n } } catch {}
-    return 'Default'
+    # OpenInputDesktop is refused from the user session while a secure desktop (Winlogon: UAC,
+    # lock, Ctrl+Alt+Del) is the input desktop, so a failure here means "not ours". Ask the
+    # SYSTEM helper, which can open it; without a helper report it as Unknown, never Default.
+    if (Test-SecureHelperAlive) {
+        try { $d = (Invoke-Secure 'desktop' @{} 4).desktop; if ($d) { return [string]$d } } catch {}
+    }
+    return 'Unknown'
 }
 function Test-SecureHelperAlive {
     $beat = Join-Path $SecureDir 'secure.status.json'
-    if (-not (Test-Path $beat)) { return $false }
-    try { $s = [IO.File]::ReadAllText($beat, $Utf8) | ConvertFrom-Json
-        return (([DateTime]::UtcNow - [DateTime]::Parse($s.time).ToUniversalTime()).TotalSeconds -lt 12) } catch { return $false }
+    for ($i = 0; $i -lt 5; $i++) {   # retry: a read can collide with the helper replacing the file
+        if (-not (Test-Path $beat)) { return $false }
+        try { $s = [IO.File]::ReadAllText($beat, $Utf8) | ConvertFrom-Json
+            return (([DateTime]::UtcNow - [DateTime]::Parse($s.time).ToUniversalTime()).TotalSeconds -lt 12) } catch { Start-Sleep -Milliseconds 50 }
+    }
+    return $false
 }
 # Route an input/capture op to the secure helper when the current input desktop is not Default
 # (UAC / lock / Ctrl+Alt+Del), unless the caller forces direct. Honours an explicit -secure flag.
@@ -605,7 +614,7 @@ function Invoke-Secure($op, $params, [double]$timeoutSec = 15) {
     foreach ($d in $in, $out) { if (-not (Test-Path $d)) { New-Item -ItemType Directory -Force $d | Out-Null } }
     $sid = '{0:yyyyMMddHHmmssfff}_{1}' -f (Get-Date), ([guid]::NewGuid().ToString('N').Substring(0, 6))
     $req = [ordered]@{ id = $sid; op = $op }
-    foreach ($k in $params.Keys) { $req[$k] = $params[$k] }
+    foreach ($k in @($params.PSBase.Keys)) { $req[$k] = $params[$k] }
     $tmp = Join-Path $in "$sid.tmp"
     [IO.File]::WriteAllText($tmp, ($req | ConvertTo-Json -Compress -Depth 8), $Utf8)
     Move-Item -LiteralPath $tmp -Destination (Join-Path $in "$sid.json") -Force
@@ -752,7 +761,9 @@ function Invoke-Action($req) {
                 $keys = [string](Need $p 'keys'); $sent = @()
                 for ($r = 0; $r -lt [int](P $p 'repeat' 1); $r++) {
                     foreach ($combo in ($keys -split '\s+' | Where-Object { $_ -ne '' })) {
-                        Invoke-Secure 'key' @{ vks = (Get-Vks $combo | ForEach-Object { [int]$_ }) } | Out-Null; $sent += $combo
+                        # Get-Vks returns its array as one pipeline object; unroll it before mapping.
+                        Invoke-Secure 'key' @{ vks = @((Get-Vks $combo) | ForEach-Object { [int]$_ }) } | Out-Null; $sent += $combo
+                        Start-Sleep -Milliseconds ([int](P $p 'delay' 50))
                     }
                 }
                 return @{ sent = $sent; via = 'secure' }
