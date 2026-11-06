@@ -1,95 +1,97 @@
-# sbx.ps1 액션 레퍼런스
+# sbx.ps1 action reference
 
-모든 응답: `{"ok":bool, "action":..., "result":{...}, "error":"...", "ms":처리시간}`.
-파라미터는 `-name value`, `-name=value`, `-flag`, `-paramsJson '{...}'`, `-paramsFile f.json`로 넘긴다.
-`-textFile/-commandFile/-valueFile <호스트파일>`은 파일 내용을 `text/command/value`로 넣는다.
-호스트 전용 옵션: `-wait <초>`(응답 대기 시간, 기본 max(60, timeout+30)), `-force`(하트비트 검사 생략).
+**English** | [한국어](../docs/actions.ko.md) | [日本語](../docs/actions.ja.md) | [简体中文](../docs/actions.zh-CN.md)
 
-## 호스트 액션
+Every response: `{"ok":bool, "action":..., "result":{...}, "error":"...", "ms":elapsedMs}`.
+Pass parameters as `-name value`, `-name=value`, `-flag`, `-paramsJson '{...}'` or `-paramsFile f.json`.
+`-textFile/-commandFile/-valueFile <host file>` puts the file's content into `text/command/value`.
+Host-only options: `-wait <seconds>` (how long to wait for a response, default max(60, timeout+30)), `-force` (skip the heartbeat check).
 
-| 액션 | 파라미터 | 설명 |
+## Host actions
+
+| Action | Parameters | Description |
 |---|---|---|
-| `check` | | 설치/하이퍼바이저/재부팅 대기/브리지 경로 진단, `hints` |
-| `start` | `-noNetwork` `-memory MB(4096)` `-vgpu` `-noClipboard` `-map "host[=sandbox][;ro]\|..."` `-timeout 240` | .wsb 생성 후 실행, 에이전트 하트비트까지 대기, `info` 반환 |
-| `stop` | `-kill` | 게스트 shutdown → 남은 프로세스 강제 종료 |
-| `status` | | 하트비트(`ageSeconds`), 샌드박스 프로세스 |
-| `logs` | `-lines 40` | agent.log / launcher.log 꼬리 |
-| `update-agent` | | `scripts/agent/*`를 브리지로 복사하고 에이전트 재시작 |
-| `push` | `-src 호스트경로 -dst 샌드박스경로` | 파일/폴더를 샌드박스로 복사 |
-| `pull` | `-src 샌드박스경로 -dst 호스트경로` | 파일/폴더를 호스트로 복사 |
-| `call` | `call <action> -paramsJson ...` | 임의 에이전트 액션 호출 |
+| `check` | | Diagnoses install / hypervisor / pending reboot / bridge path, returns `hints` |
+| `start` | `-noNetwork` `-memory MB(4096)` `-vgpu` `-noClipboard` `-map "host[=sandbox][;ro]\|..."` `-timeout 240` | Writes a .wsb and launches it, waits for the agent heartbeat, returns `info` |
+| `stop` | `-kill` | Guest shutdown → force-kills leftover processes |
+| `status` | | Heartbeat (`ageSeconds`), sandbox processes |
+| `logs` | `-lines 40` | Tail of agent.log / launcher.log |
+| `update-agent` | | Copies `scripts/agent/*` to the bridge and restarts the agent |
+| `push` | `-src hostPath -dst sandboxPath` | Copies a file/folder into the sandbox |
+| `pull` | `-src sandboxPath -dst hostPath` | Copies a file/folder to the host |
+| `call` | `call <action> -paramsJson ...` | Calls an arbitrary agent action |
 
-## 에이전트 액션 (샌드박스 내부)
+## Agent actions (inside the sandbox)
 
-### 명령/프로세스
-| 액션 | 파라미터 | 결과 |
+### Commands / processes
+| Action | Parameters | Result |
 |---|---|---|
 | `ping` | | `pong, agent, pid` |
-| `info` | | OS, 사용자, elevated, 메모리, IPv4, 화면 |
-| `exec` | `command`*, `shell powershell\|cmd`, `timeout 120`, `cwd`, `maxChars 200000` | `exitCode, stdout, stderr, timedOut, durationMs, truncated` (UTF-8). 타임아웃 시 프로세스 트리 종료 |
-| `job_start` | `command`*, `shell`, `cwd` | `jobId, pid, stdoutFile` — 백그라운드 실행 |
-| `job_status` | `id`(없으면 전체 목록), `maxChars 20000` | `running, exitCode, stdout, stderr`(꼬리) |
-| `job_stop` | `id`* | 프로세스 트리 종료 |
-| `launch` | `path`*, `args`, `cwd`, `admin`, `waitWindow`, `timeout 20` | `pid, name` — GUI 앱 실행(분리) |
-| `ps` | `name '*'`(와일드카드), `max 200` | `pid, name, title, memMB, cpu` (메모리 내림차순) |
-| `kill` | `pid` 또는 `name` | `killed` |
+| `info` | | OS, user, elevated, memory, IPv4, screen |
+| `exec` | `command`*, `shell powershell\|cmd`, `timeout 120`, `cwd`, `maxChars 200000` | `exitCode, stdout, stderr, timedOut, durationMs, truncated` (UTF-8). Kills the process tree on timeout |
+| `job_start` | `command`*, `shell`, `cwd` | `jobId, pid, stdoutFile` — runs in the background |
+| `job_status` | `id` (omit for the full list), `maxChars 20000` | `running, exitCode, stdout, stderr` (tail) |
+| `job_stop` | `id`* | Kills the process tree |
+| `launch` | `path`*, `args`, `cwd`, `admin`, `waitWindow`, `timeout 20` | `pid, name` — launches a GUI app (detached) |
+| `ps` | `name '*'` (wildcard), `max 200` | `pid, name, title, memMB, cpu` (by memory, descending) |
+| `kill` | `pid` or `name` | `killed` |
 | `sleep` | `ms 1000` | |
 
-### 화면/마우스
-| 액션 | 파라미터 | 결과 |
+### Screen / mouse
+| Action | Parameters | Result |
 |---|---|---|
-| `screen` | | 가상 화면, 모니터 목록, dpi, 커서 |
-| `screenshot` | `name`, `scale 1.0`, `x y width height`(영역) 또는 `title/hwnd/process`(창), `cursor true`, `.jpg` 이름이면 JPEG | `file, hostPath, region, scale, cursor` |
+| `screen` | | Virtual screen, monitor list, dpi, cursor |
+| `screenshot` | `name`, `scale 1.0`, `x y width height` (region) or `title/hwnd/process` (window), `cursor true`, JPEG if the name ends in `.jpg` | `file, hostPath, region, scale, cursor` |
 | `cursor` | | `x, y` |
-| `move` | `x* y*`, `steps`, `duration ms` | 부드러운 이동은 steps>1 |
-| `click` | `x y`(생략 시 현재 위치), `button left\|right\|middle\|x1\|x2`, `double`, `count`, `modifiers "ctrl+shift"` | |
-| `mouse_down` / `mouse_up` | `x y`, `button` | 수동 드래그/길게 누르기 |
+| `move` | `x* y*`, `steps`, `duration ms` | Smooth movement when steps>1 |
+| `click` | `x y` (current position if omitted), `button left\|right\|middle\|x1\|x2`, `double`, `count`, `modifiers "ctrl+shift"` | |
+| `mouse_down` / `mouse_up` | `x y`, `button` | Manual drag / long press |
 | `drag` | `x1* y1* x2* y2*`, `button`, `steps 20`, `duration 300` | |
-| `scroll` | `x y`, `clicks -3`(음수=아래/왼쪽), `horizontal` | |
+| `scroll` | `x y`, `clicks -3` (negative = down/left), `horizontal` | |
 
-### 키보드
-| 액션 | 파라미터 | 설명 |
+### Keyboard
+| Action | Parameters | Description |
 |---|---|---|
-| `type` | `text`*, `delay ms 0` | KEYEVENTF_UNICODE로 직접 입력 — 한글/이모지 OK, IME 상태 무관. `\n`=Enter, `\t`=Tab |
-| `keys` | `keys`*, `repeat 1`, `delay 50` | `"ctrl+shift+esc"` 동시, 공백 구분은 순차: `"ctrl+a ctrl+c tab enter"` |
-| `key_down` / `key_up` | `keys`* | 누른 채 유지/해제 (예: shift 누르고 클릭) |
+| `type` | `text`*, `delay ms 0` | Direct input via KEYEVENTF_UNICODE — Korean/CJK/emoji OK, independent of IME state. `\n`=Enter, `\t`=Tab |
+| `keys` | `keys`*, `repeat 1`, `delay 50` | `"ctrl+shift+esc"` is simultaneous; space-separated is sequential: `"ctrl+a ctrl+c tab enter"` |
+| `key_down` / `key_up` | `keys`* | Hold / release (e.g. hold shift and click) |
 
-키 이름: `ctrl alt shift win enter tab esc space backspace delete insert home end pageup pagedown up down left right f1..f24 capslock numlock printscreen pause apps hangul hanja num0..num9 multiply add subtract decimal divide plus minus comma period volumeup volumedown volumemute mediaplay medianext mediaprev browserback browserforward browserrefresh`, 영숫자 한 글자, 구두점 한 글자(`/`, `;` 등), `0x41` 같은 가상키 코드. `+` 키 자체는 `plus`.
+Key names: `ctrl alt shift win enter tab esc space backspace delete insert home end pageup pagedown up down left right f1..f24 capslock numlock printscreen pause apps hangul hanja num0..num9 multiply add subtract decimal divide plus minus comma period volumeup volumedown volumemute mediaplay medianext mediaprev browserback browserforward browserrefresh`, a single alphanumeric character, a single punctuation character (`/`, `;`, etc.), or a virtual-key code such as `0x41`. The `+` key itself is `plus`.
 
-### 창
-| 액션 | 파라미터 | 결과 |
+### Windows
+| Action | Parameters | Result |
 |---|---|---|
-| `windows` | `title`(부분일치/와일드카드), `process`, `class`, `all`(숨김 포함) | `hwnd, title, class, pid, process, x, y, width, height, minimized, maximized, foreground` |
-| `foreground` | | 현재 포그라운드 창 |
-| `window` | `op focus\|minimize\|maximize\|restore\|close\|move`*, 대상 `hwnd\|title\|process`, move면 `x y width height` | `ok, window` |
-| `wait_window` | `title/process/class`, `timeout 30`, `gone`(사라질 때까지) | `found, window, waitedMs` |
+| `windows` | `title` (substring/wildcard), `process`, `class`, `all` (include hidden) | `hwnd, title, class, pid, process, x, y, width, height, minimized, maximized, foreground` |
+| `foreground` | | Current foreground window |
+| `window` | `op focus\|minimize\|maximize\|restore\|close\|move`*, target `hwnd\|title\|process`, `x y width height` for move | `ok, window` |
+| `wait_window` | `title/process/class`, `timeout 30`, `gone` (wait until it disappears) | `found, window, waitedMs` |
 
 ### UI Automation
-대상 창: `hwnd|title|process` (생략 시 포그라운드 창). 요소 검색: `name`, `id`(AutomationId), `type`(Button, Edit, MenuItem, ... — 모두 `-like` 와일드카드), `index 0`.
+Target window: `hwnd|title|process` (foreground window if omitted). Element search: `name`, `id` (AutomationId), `type` (Button, Edit, MenuItem, ... — all `-like` wildcards), `index 0`.
 
-| 액션 | 파라미터 | 결과 |
+| Action | Parameters | Result |
 |---|---|---|
-| `ui_tree` | `depth 3`, `max 400` | 트리: `name, type, id, class, enabled, rect, center, value` |
-| `ui_find` | `name/id/type`, `max 50` | 일치 요소 목록 |
-| `ui_invoke` | `name/id/type`*, `index` | Invoke → Toggle → SelectionItem → ExpandCollapse 패턴 순 시도, 없으면 중앙 클릭. `method` 반환 |
-| `ui_set_value` | `name/id/type`*, `value`* | ValuePattern.SetValue, 없으면 포커스 → Ctrl+A → 타이핑 |
+| `ui_tree` | `depth 3`, `max 400` | Tree: `name, type, id, class, enabled, rect, center, value` |
+| `ui_find` | `name/id/type`, `max 50` | List of matching elements |
+| `ui_invoke` | `name/id/type`*, `index` | Tries the Invoke → Toggle → SelectionItem → ExpandCollapse patterns in order, otherwise clicks the center. Returns `method` |
+| `ui_set_value` | `name/id/type`*, `value`* | ValuePattern.SetValue, otherwise focus → Ctrl+A → typing |
 
-### 파일/클립보드
-| 액션 | 파라미터 | 설명 |
+### Files / clipboard
+| Action | Parameters | Description |
 |---|---|---|
-| `ls` | `path`, `max 500` | 이름, dir, size, modified |
-| `read_text` | `path`*, `maxChars` | 텍스트 읽기 |
-| `write_text` | `path`*, `text`, `append` | UTF-8(BOM 없음) 쓰기, 상위 폴더 자동 생성 |
-| `copy` | `src*`, `dst*` — `bridge:files/x`는 `C:\Bridge\files\x` | 샌드박스 내부 복사(재귀) |
-| `delete` | `path`* | 재귀 삭제 |
-| `clipboard_get` / `clipboard_set` | `text` | 샌드박스 클립보드 |
+| `ls` | `path`, `max 500` | name, dir, size, modified |
+| `read_text` | `path`*, `maxChars` | Reads text |
+| `write_text` | `path`*, `text`, `append` | Writes UTF-8 (no BOM), creates parent folders |
+| `copy` | `src*`, `dst*` — `bridge:files/x` means `C:\Bridge\files\x` | Copies inside the sandbox (recursive) |
+| `delete` | `path`* | Recursive delete |
+| `clipboard_get` / `clipboard_set` | `text` | Sandbox clipboard |
 
-### 에이전트 수명
-| 액션 | 설명 |
+### Agent lifecycle
+| Action | Description |
 |---|---|
-| `restart_agent` | 종료 코드 0 → 런처가 재시작 (코드 재로드) |
-| `stop_agent` | 종료 코드 99 → 런처도 종료 (샌드박스는 유지) |
-| `shutdown` | 응답 후 게스트 OS 종료 → 샌드박스 창 닫힘 (`stop`이 사용) |
+| `restart_agent` | Exit code 0 → the launcher restarts it (reloads code) |
+| `stop_agent` | Exit code 99 → the launcher exits too (the sandbox keeps running) |
+| `shutdown` | After responding, shuts down the guest OS → the sandbox window closes (used by `stop`) |
 
-## 브리지 폴더 구조 (호스트 `%USERPROFILE%\WinSandboxBridge` = 샌드박스 `C:\Bridge`)
-`agent\`(코드) `inbox\` `outbox\` `shots\`(스크린샷) `files\`(전송 스테이징, 자유 사용) `jobs\`(작업 출력) `logs\` `status.json`(2초마다 하트비트) `sandbox.wsb`(마지막 실행 설정).
+## Bridge folder layout (host `%USERPROFILE%\WinSandboxBridge` = sandbox `C:\Bridge`)
+`agent\` (code) `inbox\` `outbox\` `shots\` (screenshots) `files\` (transfer staging, free to use) `jobs\` (job output) `logs\` `status.json` (heartbeat every 2 s) `sandbox.wsb` (last launch config).

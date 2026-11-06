@@ -21,7 +21,7 @@ host: sbx.ps1 ──JSON──▶ %USERPROFILE%\WinSandboxBridge ═(mapped fold
 | UI Automation | `ui_tree` `ui_find` `ui_invoke` `ui_set_value` |
 | ファイル・クリップボード | `push` `pull` `ls` `read_text` `write_text` `copy` `delete` `clipboard_get` `clipboard_set` |
 
-すべてのパラメーターは [references/actions.md](../references/actions.md) を参照してください(韓国語)。
+すべてのパラメーターは [アクションリファレンス](actions.ja.md)を参照してください。
 
 ## 必要条件
 
