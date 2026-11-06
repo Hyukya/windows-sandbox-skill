@@ -15,7 +15,7 @@ host: sbx.ps1 ──JSON──▶ %USERPROFILE%\WinSandboxBridge ═(mapped fold
 | Lifecycle | `check` `start` `stop` `status` `logs` `update-agent` (reload the agent without rebooting) |
 | Run host files | `run` — copy a host file/folder/URL in and run it by type (exe, msi, ps1, bat/cmd, js, reg, zip, iso, folder, URL), booting the sandbox if needed |
 | Commands | `exec` (PowerShell/cmd with stdout, stderr, exit code, timeout), `job_start` / `job_status` / `job_stop`, `launch`, `ps`, `kill` |
-| Screen | `screenshot` (full screen, region or window; scaling; cursor marker), `screen`, `cursor` |
+| Screen | `screenshot` (full screen, region or window; scaling; cursor marker), `screen`, `cursor`, `host_screenshot` (captures the sandbox window from the host, for when in-guest capture is blocked) |
 | Mouse | `move` `click` (left/right/middle/double/with modifiers) `drag` `scroll` `mouse_down` `mouse_up` |
 | Keyboard | `type` (direct Unicode input, so Korean, CJK and emoji work), `keys` (`ctrl+shift+esc`, key sequences), `key_down` `key_up` |
 | Windows | `windows` `foreground` `window` (focus/minimize/maximize/restore/close/move) `wait_window` |
@@ -53,6 +53,7 @@ $SBX start                                   # boot the sandbox and wait for the
 $SBX exec -command 'Get-ComputerInfo | Select OsName'
 $SBX keys -keys 'win+r'; $SBX type -text 'cmd'; $SBX keys -keys enter
 $SBX screenshot                              # PNG path in result.hostPath
+$SBX host_screenshot                         # same, but captured from the host (works when the guest blocks capture)
 $SBX click -x 640 -y 400
 $SBX push -src ./setup.exe -dst 'C:\Users\WDAGUtilityAccount\Desktop\setup.exe'
 $SBX run -path ./setup.msi -silent -wait       # copy a host file in and run it (boots the sandbox if needed)

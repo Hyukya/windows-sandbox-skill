@@ -15,7 +15,7 @@ host: sbx.ps1 ──JSON──▶ %USERPROFILE%\WinSandboxBridge ═(mapped fold
 | 生命周期 | `check` `start` `stop` `status` `logs` `update-agent`（无需重启即可更新代理） |
 | 运行主机文件 | `run` — 将主机上的文件/文件夹/URL 放入并按类型运行(exe、msi、ps1、bat/cmd、js、reg、zip、iso、文件夹、URL),沙盒未运行时先启动 |
 | 命令 | `exec`（PowerShell/cmd，含 stdout、stderr、退出码、超时），`job_start` / `job_status` / `job_stop`，`launch`，`ps`，`kill` |
-| 屏幕 | `screenshot`（全屏/区域/窗口，缩放，光标标记），`screen`，`cursor` |
+| 屏幕 | `screenshot`（全屏/区域/窗口，缩放，光标标记），`screen`，`cursor`，`host_screenshot`（从主机截取沙盒窗口，用于客户机内截屏被阻止时） |
 | 鼠标 | `move` `click`（左键/右键/中键/双击/组合键） `drag` `scroll` `mouse_down` `mouse_up` |
 | 键盘 | `type`（直接输入 Unicode，中文、韩文、表情符号均可），`keys`（`ctrl+shift+esc`、按键序列），`key_down` `key_up` |
 | 窗口 | `windows` `foreground` `window`（focus/minimize/maximize/restore/close/move） `wait_window` |
@@ -53,6 +53,7 @@ $SBX start                                   # 启动沙盒并等待代理就绪
 $SBX exec -command 'Get-ComputerInfo | Select OsName'
 $SBX keys -keys 'win+r'; $SBX type -text 'cmd'; $SBX keys -keys enter
 $SBX screenshot                              # PNG 路径位于 result.hostPath
+$SBX host_screenshot                         # 同样的结果，但从主机截取（客户机阻止截屏时）
 $SBX click -x 640 -y 400
 $SBX push -src ./setup.exe -dst 'C:\Users\WDAGUtilityAccount\Desktop\setup.exe'
 $SBX run -path ./setup.msi -silent -wait       # 将主机文件放入并直接运行(必要时先启动)

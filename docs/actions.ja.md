@@ -18,6 +18,7 @@
 | `logs` | `-lines 40` | agent.log / launcher.log の末尾 |
 | `update-agent` | | `scripts/agent/*` をブリッジにコピーしてエージェントを再起動 |
 | `run` | `-path ホストのファイル\|フォルダー\|URL` または `-sandboxPath`、`-args`、`-wait`、`-timeout 600`、`-silent`(msi)、`-withFolder`、`-entry`(zip/iso 内のファイル)、`-dst サンドボックスのフォルダー(デスクトップ)`、`-as 種類`、`-waitWindow`、`-screenshot`、`-settle 3`、`-noStart`、`-bootTimeout 240` + `start` のオプション | 必要なら起動 → コピー → 種類に応じて実行。結果: `kind, mode(wait\|launch), sandboxPath, command, exec{exitCode,stdout,stderr}` または `launch{pid}`、`extractedTo/mountedAt`、`screenshot`、`boot`。種類の表は SKILL.md を参照 |
+| `host_screenshot` | `-area display\|window`(display = ゲスト画面のみ)、`-method auto\|print\|screen`、`-x -y -width -height`(切り抜き、サンドボックス座標)、`-scale 1.0`、`-name`(`.jpg` なら JPEG)、`-dst ホストのパス`、`-restore`、`-activate`、`-settle 0.7` | サンドボックスのウィンドウを**ホストから**キャプチャ。エージェント不要なので、ゲストが画面キャプチャを禁止している場合、エージェントが固まった場合、起動中でも動作(UAC/ロック画面は `secure-shot` を使用)。`print`(PrintWindow)はウィンドウが隠れていても可、`screen` はホスト画面のコピーなのでウィンドウが最前面にある必要あり。`auto` = print、空画像なら screen。最小化中は `-restore` がないと失敗。結果: `hostPath, method, area, blank, region, scale, window, hostRect, warnings`(display は `screenshot` と同じ座標変換) |
 | `push` | `-src ホストのパス -dst サンドボックスのパス` | ファイル/フォルダーをサンドボックスへコピー |
 | `pull` | `-src サンドボックスのパス -dst ホストのパス` | ファイル/フォルダーをホストへコピー |
 | `call` | `call <action> -paramsJson ...` | 任意のエージェントアクションを呼び出す |

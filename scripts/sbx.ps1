@@ -1,6 +1,6 @@
 # Host-side controller for Windows Sandbox.
 # Usage: powershell -NoProfile -ExecutionPolicy Bypass -File sbx.ps1 <action> [-name value]... [-flag]
-# Host actions : check, start, stop, status, run, push, pull, update-agent, logs, call
+# Host actions : check, start, stop, status, run, host_screenshot, push, pull, update-agent, logs, call
 # Agent actions: anything else is forwarded to the in-sandbox agent (see references/actions.md)
 # Output: one JSON object on stdout. Exit code 0 = ok, 1 = error.
 
@@ -275,6 +275,123 @@ function Get-RunSpec([string]$kind, [string]$f, [string]$a, [bool]$wait, [bool]$
 
 function PsQuote([string]$s) { return "'" + ($s -replace "'", "''") + "'" }
 
+function Use-HostNative {
+    if (-not ('SbxHost' -as [type])) {
+        Add-Type -AssemblyName System.Drawing
+        Add-Type -TypeDefinition ([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'hostnative.cs'))) -ReferencedAssemblies System.Drawing
+    }
+    [SbxHost]::MakeDpiAware()
+}
+
+function Save-HostScreenshot {
+    # Captures the sandbox window from the HOST (no agent needed). Works when the guest blocks screen capture,
+    # the agent is dead/hung, or during boot/logon. -area display|window, -method auto|print|screen,
+    # -restore, -activate, -scale, -name, -dst, -x -y -width -height (crop, sandbox coordinates; display area only)
+    Use-HostNative
+    $procIds = @(Get-SandboxProcs | ForEach-Object { $_.Id })
+    $wins = @(if ($procIds.Count) { [SbxHost]::WindowsOf([int[]]$procIds) })
+    if ($wins.Count -eq 0) { throw 'No Windows Sandbox window found on the host. Is the sandbox running? (sbx.ps1 status)' }
+    # prefer the window that hosts a guest display, then the largest
+    $hwnd = $wins | Sort-Object @{ e = { [int]([SbxHost]::FindDisplay($_) -ne [IntPtr]::Zero) } }, @{ e = { $r = [SbxHost]::FrameRect($_); ($r.Right - $r.Left) * ($r.Bottom - $r.Top) } } -Descending | Select-Object -First 1
+
+    $restored = $false
+    if ([SbxHost]::IsIconic($hwnd)) {
+        if (-not ((Get-Param 'restore' $false) -or (Get-Param 'activate' $false))) {
+            throw 'The sandbox window is minimized, so there is nothing to capture (and the guest may stop rendering). Pass -restore to restore it without focusing it, or -activate to bring it to the front.'
+        }
+        [void][SbxHost]::ShowWindow($hwnd, 4); $restored = $true   # SW_SHOWNOACTIVATE
+    }
+    if (Get-Param 'activate' $false) { [SbxHost]::Activate($hwnd); $restored = $true }
+    if ($restored) { Start-Sleep -Milliseconds ([int]([double](Get-Param 'settle' 0.7) * 1000)) }
+
+    $area = ([string](Get-Param 'area' 'display')).ToLowerInvariant()
+    if ($area -notin 'display', 'window') { throw "host_screenshot: -area must be display or window (got '$area')" }
+    $method = ([string](Get-Param 'method' 'auto')).ToLowerInvariant()
+    if ($method -notin 'auto', 'print', 'screen') { throw "host_screenshot: -method must be auto, print or screen (got '$method')" }
+
+    $wr = New-Object SbxHost+RECT; [void][SbxHost]::GetWindowRect($hwnd, [ref]$wr)
+    $disp = [SbxHost]::FindDisplay($hwnd)
+    $dr = if ($disp -ne [IntPtr]::Zero) { $t = New-Object SbxHost+RECT; [void][SbxHost]::GetWindowRect($disp, [ref]$t); $t } else { [SbxHost]::ClientScreenRect($hwnd) }
+    $kr = if ($area -eq 'window') { [SbxHost]::FrameRect($hwnd) } else { $dr }   # host-screen rect to keep
+    $cx = [int]$kr.Left; $cy = [int]$kr.Top; $cw = [int]($kr.Right - $kr.Left); $ch = [int]($kr.Bottom - $kr.Top)
+    if ($cw -le 0 -or $ch -le 0) { throw 'The sandbox window has no visible area.' }
+
+    # guest screen size (from the last heartbeat) -> ratio between guest pixels and host display pixels (1 unless scaled)
+    $st = Get-Status
+    $gw = $dr.Right - $dr.Left; $gh = $dr.Bottom - $dr.Top
+    if ($st -and $st.screen -and [int]$st.screen.width -gt 0) { $gw = [int]$st.screen.width; $gh = [int]$st.screen.height }
+    $ratio = $gw / [double]($dr.Right - $dr.Left)   # guest px per host px
+
+    # crop in sandbox coordinates (display area only)
+    $sub = $null
+    if ($area -eq 'display' -and ($Params.Contains('x') -or $Params.Contains('y') -or $Params.Contains('width') -or $Params.Contains('height'))) {
+        $sx = [int](Get-Param 'x' 0); $sy = [int](Get-Param 'y' 0)
+        $sw = [int](Get-Param 'width' ($gw - $sx)); $sh = [int](Get-Param 'height' ($gh - $sy))
+        $sub = @{ x = $sx; y = $sy; width = $sw; height = $sh }
+        $cx = $dr.Left + [int][Math]::Floor($sx / $ratio); $cy = $dr.Top + [int][Math]::Floor($sy / $ratio)
+        $cw = [int][Math]::Ceiling($sw / $ratio); $ch = [int][Math]::Ceiling($sh / $ratio)
+        if ($cw -le 0 -or $ch -le 0) { throw 'host_screenshot: crop region is empty' }
+    }
+
+    $used = $null; $bmp = $null; $printBmp = $null; $warn = @()
+    if ($method -in 'auto', 'print') {
+        try {
+            $full = [SbxHost]::CapturePrint($hwnd)
+            # judge blankness on the whole window: a small crop of a plain area is legitimately one color
+            $fullBlank = [SbxHost]::LooksBlank($full)
+            try { $printBmp = [SbxHost]::Crop($full, $cx - $wr.Left, $cy - $wr.Top, $cw, $ch) } finally { $full.Dispose() }
+            if ($method -eq 'print' -or -not $fullBlank) { $bmp = $printBmp; $used = 'print' }
+        } catch { if ($method -eq 'print') { throw "host_screenshot: PrintWindow capture failed: $($_.Exception.Message)" }; $warn += "PrintWindow failed ($($_.Exception.Message)); trying a screen copy." }
+    }
+    if (-not $bmp) {
+        try {
+            $bmp = [SbxHost]::CaptureScreen($cx, $cy, $cw, $ch); $used = 'screen'
+            if ($printBmp) { $printBmp.Dispose(); $warn += 'PrintWindow returned a blank image; used a screen copy instead.' }
+            if ([SbxHost]::GetForegroundWindow() -ne $hwnd) { $warn += 'Screen copy grabs whatever is on top of the host screen there; the sandbox window is not in the foreground, so other windows may cover it. Pass -activate to bring it to the front.' }
+        } catch {
+            $why = "screen copy failed ($($_.Exception.InnerException.Message)): the host desktop is not readable from this process (locked, or a minimized/disconnected Remote Desktop session)"
+            if (-not $printBmp) { throw "host_screenshot: $why. Use -method print." }
+            $bmp = $printBmp; $used = 'print'; $warn += "$why; kept the PrintWindow image."
+        }
+    }
+    $blank = [SbxHost]::LooksBlank($bmp)
+    if ($blank) { $warn += 'The captured image is a single color (guest screen black/locked/booting, or capture blocked on the host).' }
+
+    $scale = [double](Get-Param 'scale' 1.0)
+    if ($scale -gt 0 -and $scale -ne 1.0) {
+        $nw = [Math]::Max(1, [int]($bmp.Width * $scale)); $nh = [Math]::Max(1, [int]($bmp.Height * $scale))
+        $small = New-Object System.Drawing.Bitmap $nw, $nh
+        $g = [System.Drawing.Graphics]::FromImage($small)
+        $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+        $g.DrawImage($bmp, 0, 0, $nw, $nh); $g.Dispose(); $bmp.Dispose(); $bmp = $small
+    } else { $scale = 1.0 }
+
+    $name = [string](Get-Param 'name' ("host_{0:yyyyMMdd_HHmmss_fff}.png" -f (Get-Date)))
+    if ($name -notmatch '\.(png|jpg|jpeg)$') { $name += '.png' }
+    $dst = [string](Get-Param 'dst' '')
+    $outPath = if ($dst) { $dst } else { New-Item -ItemType Directory -Force (Join-Path $Bridge 'shots') | Out-Null; Join-Path $Bridge "shots\$name" }
+    $parent = Split-Path -Parent $outPath; if ($parent -and -not (Test-Path $parent)) { New-Item -ItemType Directory -Force $parent | Out-Null }
+    $fmt = if ($outPath -match '\.jpe?g$') { [System.Drawing.Imaging.ImageFormat]::Jpeg } else { [System.Drawing.Imaging.ImageFormat]::Png }
+    $bmp.Save($outPath, $fmt); $iw = $bmp.Width; $ih = $bmp.Height; $bmp.Dispose()
+
+    $res = [ordered]@{ hostPath = (Resolve-Path -LiteralPath $outPath).Path; method = $used; area = $area; width = $iw; height = $ih; blank = $blank
+        window = [ordered]@{ hwnd = [int64]$hwnd; title = [SbxHost]::WindowText($hwnd); foreground = ([SbxHost]::GetForegroundWindow() -eq $hwnd); restored = $restored }
+        hostRect = [ordered]@{ x = $cx; y = $cy; width = $cw; height = $ch } }
+    if ($area -eq 'display') {
+        # same mapping as the agent screenshot: sandbox = region.x + px/scale
+        $rx = if ($sub) { $sub.x } else { 0 }; $ry = if ($sub) { $sub.y } else { 0 }
+        $res.region = [ordered]@{ x = $rx; y = $ry; width = [int][Math]::Round($cw * $ratio); height = [int][Math]::Round($ch * $ratio) }
+        $res.scale = [Math]::Round($scale / $ratio, 6)
+        $res.note = 'Image pixel (px,py) -> sandbox screen (region.x + px/scale, region.y + py/scale)'
+    } else {
+        $res.scale = $scale
+        $res.displayInImage = [ordered]@{ x = [int](($dr.Left - $cx) * $scale); y = [int](($dr.Top - $cy) * $scale); width = [int](($dr.Right - $dr.Left) * $scale); height = [int](($dr.Bottom - $dr.Top) * $scale) }
+        $res.note = 'Whole sandbox window incl. title bar. displayInImage is where the guest screen sits inside the image.'
+    }
+    if ($warn.Count) { $res.warnings = $warn }
+    return $res
+}
+
 function Invoke-Run {
     # run -path <host file|folder|URL> | -sandboxPath <path already in sandbox>
     #     [-args "..."] [-wait] [-timeout 600] [-silent] [-withFolder] [-dst <sandbox dir>] [-entry <file in zip/iso>]
@@ -378,7 +495,10 @@ if (-not $letter) { throw 'image mounted but no drive letter appeared' }
     if (Get-Param 'screenshot' $false) {
         if ($mode -eq 'launch') { Start-Sleep -Milliseconds ([int]([double](Get-Param 'settle' 3) * 1000)) }
         $s = Add-HostPaths (Send-Request 'screenshot' ([ordered]@{ name = "run_$(Get-Date -Format 'HHmmss').png" }))
-        $out.screenshot = if ($s.ok) { $s.result } else { [ordered]@{ error = $s.error } }
+        $out.screenshot = if ($s.ok) { $s.result } else {
+            # in-guest capture failed (e.g. the app blocks screen capture) -> capture the sandbox window from the host
+            try { $h = Save-HostScreenshot; $h.agentError = $s.error; $h } catch { [ordered]@{ error = $s.error } }
+        }
     }
     Out-Json $out
 }
@@ -386,7 +506,7 @@ if (-not $letter) { throw 'image mounted but no drive letter appeared' }
 # ---------------------------------------------------------------- host actions
 switch ($Action.ToLowerInvariant()) {
     'help' {
-        Out-Json ([ordered]@{ ok = $true; usage = 'sbx.ps1 <action> [-param value]...'; hostActions = 'check start stop status run push pull update-agent logs call secure-shot secure-click secure-type secure-keys secure-move secure-desktop secure-sas'
+        Out-Json ([ordered]@{ ok = $true; usage = 'sbx.ps1 <action> [-param value]...'; hostActions = 'check start stop status run host_screenshot push pull update-agent logs call secure-shot secure-click secure-type secure-keys secure-move secure-desktop secure-sas'
             agentActions = 'ping info exec job_start job_status job_stop launch screen screenshot cursor move click mouse_down mouse_up drag scroll type keys key_down key_up windows window wait_window foreground ui_tree ui_find ui_invoke ui_set_value clipboard_get clipboard_set ls read_text write_text copy delete ps kill sleep secure_arm secure_status secure_sas uac restart_agent stop_agent shutdown'
             reference = (Join-Path $SkillDir 'references\actions.md') })
     }
@@ -408,6 +528,7 @@ switch ($Action.ToLowerInvariant()) {
         Out-Json ([ordered]@{ ok = $true; agentAlive = (Test-AgentAlive); status = $s; sandboxProcesses = @(Get-SandboxProcs | ForEach-Object { $_.ProcessName }); bridge = $Bridge })
     }
     'start' { Out-Json (Start-Sandbox ([double](Get-Param 'timeout' 240))) }
+    { $_ -in 'host_screenshot', 'host-screenshot' } { try { $hs = Save-HostScreenshot } catch { Fail $_.Exception.Message }; Out-Json ([ordered]@{ ok = $true; action = 'host_screenshot'; result = $hs }) }
     'run' { Invoke-Run }
     'stop' {
         $how = 'none'

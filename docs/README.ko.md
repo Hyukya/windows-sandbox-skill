@@ -15,7 +15,7 @@ host: sbx.ps1 ──JSON──▶ %USERPROFILE%\WinSandboxBridge ═(mapped fold
 | 수명 관리 | `check` `start` `stop` `status` `logs` `update-agent` (재부팅 없이 에이전트 갱신) |
 | 호스트 파일 실행 | `run` — 호스트의 파일·폴더·URL을 넣고 형식에 맞게 실행(exe, msi, ps1, bat/cmd, js, reg, zip, iso, 폴더, URL). 샌드박스가 꺼져 있으면 먼저 부팅 |
 | 명령 | `exec`(PowerShell/cmd, stdout·stderr·종료 코드·타임아웃), `job_start` / `job_status` / `job_stop`, `launch`, `ps`, `kill` |
-| 화면 | `screenshot`(전체/영역/창, 축소, 커서 표시), `screen`, `cursor` |
+| 화면 | `screenshot`(전체/영역/창, 축소, 커서 표시), `screen`, `cursor`, `host_screenshot`(호스트에서 샌드박스 창 캡처, 게스트 내부 캡처가 막혔을 때) |
 | 마우스 | `move` `click`(좌/우/중간/더블/수정키) `drag` `scroll` `mouse_down` `mouse_up` |
 | 키보드 | `type`(유니코드 직접 입력이라 한글·한자·이모지도 됨), `keys`(`ctrl+shift+esc`, 순차 입력), `key_down` `key_up` |
 | 창 | `windows` `foreground` `window`(focus/minimize/maximize/restore/close/move) `wait_window` |
@@ -53,6 +53,7 @@ $SBX start                                   # 샌드박스 부팅 후 에이전
 $SBX exec -command 'Get-ComputerInfo | Select OsName'
 $SBX keys -keys 'win+r'; $SBX type -text 'cmd'; $SBX keys -keys enter
 $SBX screenshot                              # result.hostPath에 PNG 경로
+$SBX host_screenshot                         # 같은 결과를 호스트에서 캡처 (게스트가 캡처를 막을 때)
 $SBX click -x 640 -y 400
 $SBX push -src ./setup.exe -dst 'C:\Users\WDAGUtilityAccount\Desktop\setup.exe'
 $SBX run -path ./setup.msi -silent -wait       # 호스트 파일을 넣고 바로 실행(필요하면 부팅까지)

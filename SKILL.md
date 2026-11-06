@@ -96,6 +96,7 @@ $SBX wait_window -title '*Setup*' -timeout 60
 $SBX window -title '*Setup*' -op focus        # focus|minimize|maximize|restore|close|move
 $SBX screenshot                                # full screen -> result.hostPath
 $SBX screenshot -title '*Setup*' -scale 0.5    # window region only, downscaled
+$SBX host_screenshot                           # capture the sandbox window from the HOST (see below)
 $SBX click -x 640 -y 400 [-button right] [-double] [-modifiers ctrl]
 $SBX drag -x1 100 -y1 100 -x2 400 -y2 300
 $SBX scroll -x 640 -y 400 -clicks -5           # negative = down
@@ -142,6 +143,7 @@ Ctrl+Alt+Del works the same way: `$SBX secure-sas` opens the security-options sc
 - Coordinates are physical pixels on the sandbox screen with origin (0,0). Get the screen size from `screen` or from `info.screen` in the `start` result. By default it follows the host window size (e.g. 1536×832).
 - If you downscaled with `screenshot -scale s` or captured only a region with `-title`/`-x -y -width -height`, image pixel (px,py) maps to screen coordinate `(region.x + px/s, region.y + py/s)`. Use the `region` and `scale` values in the result.
 - Screenshots mark the current cursor position with a red crosshair (turn it off with `-cursor false`).
+- **In-guest vs host capture.** `screenshot` captures inside the guest. Some apps block that (`SetWindowDisplayAffinity`, DRM, anti-capture/security software) and show up black, and it needs a live agent. `host_screenshot` captures the sandbox window from the host with PrintWindow instead: it shows what the user actually sees, works while the window is covered by other windows, while the agent is hung, and during boot/logon. For the UAC / lock / Ctrl+Alt+Del screens use `secure-shot` (above) as the primary tool. By default it crops to the guest screen (`-area window` keeps the title bar), and its `region`/`scale` follow the same mapping as `screenshot`, so its coordinates go straight to `click`. Use it when `screenshot` is black or fails, or to cross-check what the guest reports. It does not draw the cursor marker. `run -screenshot` falls back to it automatically if the in-guest capture fails.
 - If the sandbox window is minimized, rendering and input may stall. If the screen is black or input has no effect, ask the user to restore the sandbox window.
 
 ## Limitations to know

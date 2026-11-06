@@ -18,6 +18,7 @@
 | `logs` | `-lines 40` | agent.log / launcher.log 꼬리 |
 | `update-agent` | | `scripts/agent/*`를 브리지로 복사하고 에이전트 재시작 |
 | `run` | `-path 호스트파일\|폴더\|URL` 또는 `-sandboxPath`, `-args`, `-wait`, `-timeout 600`, `-silent`(msi), `-withFolder`, `-entry`(zip/iso 안의 파일), `-dst 샌드박스폴더(바탕화면)`, `-as 형식`, `-waitWindow`, `-screenshot`, `-settle 3`, `-noStart`, `-bootTimeout 240` + `start` 옵션 | 필요하면 부팅 → 복사 → 형식별 실행. 결과: `kind, mode(wait\|launch), sandboxPath, command, exec{exitCode,stdout,stderr}` 또는 `launch{pid}`, `extractedTo/mountedAt`, `screenshot`, `boot`. 형식 표는 SKILL.md 참고 |
+| `host_screenshot` | `-area display\|window`(display = 게스트 화면만), `-method auto\|print\|screen`, `-x -y -width -height`(잘라내기, 샌드박스 좌표), `-scale 1.0`, `-name`(`.jpg`면 JPEG), `-dst 호스트경로`, `-restore`, `-activate`, `-settle 0.7` | 샌드박스 창을 **호스트에서** 캡처. 에이전트가 필요 없어서 게스트가 화면 캡처를 막거나, 에이전트가 멈췄거나, 부팅 중일 때도 동작(UAC/잠금 화면은 `secure-shot` 사용). `print`(PrintWindow)는 창이 가려져 있어도 되고, `screen`은 호스트 화면을 복사하므로 창이 맨 위에 있어야 함. `auto` = print, 빈 이미지면 screen. 최소화 상태면 `-restore` 없이는 실패. 결과: `hostPath, method, area, blank, region, scale, window, hostRect, warnings`(display는 `screenshot`과 같은 좌표 변환) |
 | `push` | `-src 호스트경로 -dst 샌드박스경로` | 파일/폴더를 샌드박스로 복사 |
 | `pull` | `-src 샌드박스경로 -dst 호스트경로` | 파일/폴더를 호스트로 복사 |
 | `call` | `call <action> -paramsJson ...` | 임의 에이전트 액션 호출 |
