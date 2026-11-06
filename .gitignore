@@ -1,0 +1,7 @@
+# runtime data never lives in the repo (bridge is %USERPROFILE%\WinSandboxBridge), but just in case
+*.wsb
+*.log
+shots/
+*-workspace/
+.DS_Store
+Thumbs.db
