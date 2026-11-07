@@ -683,7 +683,9 @@ switch ($Action.ToLowerInvariant()) {
     'logs' {
         $n = [int](Get-Param 'lines' 40)
         $o = [ordered]@{ ok = $true }
-        foreach ($f in 'agent', 'launcher') { $p = Join-Path $Bridge "logs\$f.log"; $o[$f] = if (Test-Path $p) { @(Get-Content $p -Tail $n -Encoding UTF8) } else { @() } }
+        # [string[]] strips the PSPath/PSDrive/PSProvider note properties Get-Content attaches to every
+        # line; ConvertTo-Json -Depth 14 would walk those provider object graphs and never finish.
+        foreach ($f in 'agent', 'launcher') { $p = Join-Path $Bridge "logs\$f.log"; $o[$f] = if (Test-Path $p) { [string[]]@(Get-Content $p -Tail $n -Encoding UTF8) } else { @() } }
         Out-Json $o
     }
     'push' {
