@@ -195,4 +195,8 @@ public static class SbxSecure
     }
 
     public static short CharToVk(char c) { return VkKeyScan(c); }
+
+    // Hand this process's resident pages back to the OS (they fault back in on use).
+    [DllImport("kernel32.dll", EntryPoint = "K32EmptyWorkingSet")] static extern bool EmptyWorkingSet(IntPtr h);
+    public static bool TrimSelf() { return EmptyWorkingSet(GetCurrentProcess()); }
 }

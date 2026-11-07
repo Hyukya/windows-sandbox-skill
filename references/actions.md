@@ -42,7 +42,7 @@ The `secure-*` host actions talk **directly** to the SYSTEM helper, bypassing th
 | `info` | | OS, user, elevated, memory, IPv4, screen |
 | `exec` | `command`*, `shell powershell\|cmd`, `timeout 120`, `cwd`, `maxChars 200000` | `exitCode, stdout, stderr, timedOut, durationMs, truncated` (UTF-8). Kills the process tree on timeout |
 | `job_start` | `command`*, `shell`, `cwd` | `jobId, pid, stdoutFile` — runs in the background |
-| `job_status` | `id` (omit for the full list), `maxChars 20000` | `running, exitCode, stdout, stderr` (tail) |
+| `job_status` | `id` (omit for the full list), `maxChars 20000` | `running, exitCode, ended, stdout, stderr` (tail). Only the newest 100 finished jobs are remembered; older ones' output stays in `jobs\<id>.out.txt` |
 | `job_stop` | `id`* | Kills the process tree |
 | `launch` | `path`*, `args`, `cwd`, `admin`, `waitWindow`, `timeout 20` | `pid, name` — launches a GUI app (detached) |
 | `ps` | `name '*'` (wildcard), `max 200` | `pid, name, title, memMB, cpu` (by memory, descending), plus `role agent\|launcher\|secure\|system` on the skill's own and critical OS processes |

@@ -28,11 +28,18 @@ function Test-HelperAlive {
 # The interactive sandbox session is 1 (WTSGetActiveConsoleSessionId returns -1 here).
 $agent = Join-Path $PSScriptRoot 'secure-agent.ps1'
 $cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$agent`" -Bridge `"$Bridge`""
+$lastTrim = [DateTime]::MinValue
 while ($true) {
     if (-not (Test-HelperAlive)) {
         try { $pid2 = [SbxSecure]::StartInSession(1, 'Winlogon', $cmd); Log "spawned helper pid $pid2" }
         catch { Log "spawn failed: $($_.Exception.Message)" }
         Start-Sleep -Seconds 3
+    }
+    # this loop only polls a heartbeat file; keep its footprint at the floor
+    if (([DateTime]::UtcNow - $lastTrim).TotalSeconds -ge 600) {
+        [GC]::Collect(); [GC]::WaitForPendingFinalizers()
+        try { [void][SbxSecure]::TrimSelf() } catch {}
+        $lastTrim = [DateTime]::UtcNow
     }
     Start-Sleep -Seconds 2
 }

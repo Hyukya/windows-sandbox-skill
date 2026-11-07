@@ -182,4 +182,17 @@ public static class SbxNative
         if (attached) AttachThreadInput(me, fgThread, false);
         return ok || GetForegroundWindow() == h;
     }
+
+    // Hand a process's resident pages back to the OS (they fault back in on use). pid 0 = this process.
+    [DllImport("kernel32.dll")] static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
+    [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+    [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
+    [DllImport("kernel32.dll", EntryPoint = "K32EmptyWorkingSet")] static extern bool EmptyWorkingSet(IntPtr h);
+    public static bool TrimWorkingSet(int pid)
+    {
+        if (pid == 0) return EmptyWorkingSet(GetCurrentProcess());
+        IntPtr h = OpenProcess(0x0100 | 0x0400, false, pid); // PROCESS_SET_QUOTA | PROCESS_QUERY_INFORMATION
+        if (h == IntPtr.Zero) return false;
+        try { return EmptyWorkingSet(h); } finally { CloseHandle(h); }
+    }
 }
