@@ -101,10 +101,23 @@ $watcher = New-Object System.IO.FileSystemWatcher $In, '*.json'
 $watcher.NotifyFilter = [IO.NotifyFilters]'FileName, LastWrite'
 $watcher.EnableRaisingEvents = $true
 $lastBeat = [DateTime]::MinValue
+# Same idle memory release as the main agent: after a burst (secure-desktop screenshots) or every
+# 10 minutes, full GC with large-object-heap compaction, then give the resident pages back.
+$dirty = $true; $lastWork = [DateTime]::UtcNow; $lastTrim = [DateTime]::UtcNow
+function Invoke-Trim {
+    [Runtime.GCSettings]::LargeObjectHeapCompactionMode = [Runtime.GCLargeObjectHeapCompactionMode]::CompactOnce
+    [GC]::Collect(); [GC]::WaitForPendingFinalizers(); [GC]::Collect()
+    try { [void][SbxSecure]::TrimSelf() } catch {}
+}
 while ($true) {
     if (([DateTime]::UtcNow - $lastBeat).TotalSeconds -ge 2) { Beat2; $lastBeat = [DateTime]::UtcNow }
     $files = @(Get-ChildItem -LiteralPath $In -Filter '*.json' -ErrorAction SilentlyContinue | Sort-Object Name)
-    if ($files.Count -eq 0) { [void]$watcher.WaitForChanged([IO.WatcherChangeTypes]'Created, Renamed, Changed', 500); continue }
+    if ($files.Count -eq 0) {
+        $now = [DateTime]::UtcNow
+        if (($dirty -and ($now - $lastWork).TotalSeconds -ge 3) -or ($now - $lastTrim).TotalSeconds -ge 600) { Invoke-Trim; $dirty = $false; $lastTrim = $now }
+        [void]$watcher.WaitForChanged([IO.WatcherChangeTypes]'Created, Renamed, Changed', 500); continue
+    }
+    $dirty = $true; $lastWork = [DateTime]::UtcNow
     foreach ($f in $files) {
         $work = "$($f.FullName).work"
         try { Move-Item -LiteralPath $f.FullName -Destination $work -ErrorAction Stop } catch { continue }

@@ -42,7 +42,7 @@
 | `info` | | 操作系统、用户、elevated、内存、IPv4、屏幕 |
 | `exec` | `command`*、`shell powershell\|cmd`、`timeout 120`、`cwd`、`maxChars 200000` | `exitCode, stdout, stderr, timedOut, durationMs, truncated`（UTF-8）。超时时结束进程树 |
 | `job_start` | `command`*、`shell`、`cwd` | `jobId, pid, stdoutFile` — 在后台运行 |
-| `job_status` | `id`（省略则列出全部）、`maxChars 20000` | `running, exitCode, stdout, stderr`（末尾） |
+| `job_status` | `id`（省略则列出全部）、`maxChars 20000` | `running, exitCode, ended, stdout, stderr`（末尾）。已结束的作业只保留最近 100 个，更早作业的输出仍在 `jobs\<id>.out.txt` |
 | `job_stop` | `id`* | 结束进程树 |
 | `launch` | `path`*、`args`、`cwd`、`admin`、`waitWindow`、`timeout 20` | `pid, name` — 启动 GUI 应用（分离运行） |
 | `ps` | `name '*'`（通配符）、`max 200` | `pid, name, title, memMB, cpu`（按内存降序）。技能自身的进程和关键系统进程带 `role agent\|launcher\|secure\|system` |

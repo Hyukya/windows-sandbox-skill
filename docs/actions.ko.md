@@ -42,7 +42,7 @@
 | `info` | | OS, 사용자, elevated, 메모리, IPv4, 화면 |
 | `exec` | `command`*, `shell powershell\|cmd`, `timeout 120`, `cwd`, `maxChars 200000` | `exitCode, stdout, stderr, timedOut, durationMs, truncated` (UTF-8). 타임아웃 시 프로세스 트리 종료 |
 | `job_start` | `command`*, `shell`, `cwd` | `jobId, pid, stdoutFile` — 백그라운드 실행 |
-| `job_status` | `id`(없으면 전체 목록), `maxChars 20000` | `running, exitCode, stdout, stderr`(꼬리) |
+| `job_status` | `id`(없으면 전체 목록), `maxChars 20000` | `running, exitCode, ended, stdout, stderr`(꼬리). 끝난 작업은 최근 100개만 기억하며, 그보다 오래된 작업의 출력은 `jobs\<id>.out.txt`에 남음 |
 | `job_stop` | `id`* | 프로세스 트리 종료 |
 | `launch` | `path`*, `args`, `cwd`, `admin`, `waitWindow`, `timeout 20` | `pid, name` — GUI 앱 실행(분리) |
 | `ps` | `name '*'`(와일드카드), `max 200` | `pid, name, title, memMB, cpu` (메모리 내림차순). 스킬 자체 프로세스와 핵심 OS 프로세스에는 `role agent\|launcher\|secure\|system` 표시 |

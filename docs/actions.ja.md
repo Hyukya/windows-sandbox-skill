@@ -42,7 +42,7 @@
 | `info` | | OS、ユーザー、elevated、メモリ、IPv4、画面 |
 | `exec` | `command`*、`shell powershell\|cmd`、`timeout 120`、`cwd`、`maxChars 200000` | `exitCode, stdout, stderr, timedOut, durationMs, truncated`(UTF-8)。タイムアウト時はプロセスツリーを終了 |
 | `job_start` | `command`*、`shell`、`cwd` | `jobId, pid, stdoutFile` — バックグラウンドで実行 |
-| `job_status` | `id`(省略時は一覧)、`maxChars 20000` | `running, exitCode, stdout, stderr`(末尾) |
+| `job_status` | `id`(省略時は一覧)、`maxChars 20000` | `running, exitCode, ended, stdout, stderr`(末尾)。終了したジョブは直近 100 件のみ保持し、それより古いジョブの出力は `jobs\<id>.out.txt` に残る |
 | `job_stop` | `id`* | プロセスツリーを終了 |
 | `launch` | `path`*、`args`、`cwd`、`admin`、`waitWindow`、`timeout 20` | `pid, name` — GUI アプリを起動(切り離し) |
 | `ps` | `name '*'`(ワイルドカード)、`max 200` | `pid, name, title, memMB, cpu`(メモリの降順)。スキル自身のプロセスと重要な OS プロセスには `role agent\|launcher\|secure\|system` を付与 |

@@ -193,21 +193,27 @@ function Invoke-Exec($p, [string]$id) {
     $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.RedirectStandardInput = $true
     $psi.StandardOutputEncoding = $Utf8; $psi.StandardErrorEncoding = $Utf8
     $sw = [Diagnostics.Stopwatch]::StartNew()
-    $proc = [System.Diagnostics.Process]::Start($psi)
-    $proc.StandardInput.Close()
-    $outT = $proc.StandardOutput.ReadToEndAsync(); $errT = $proc.StandardError.ReadToEndAsync()
-    $timedOut = $false
-    while (-not $proc.WaitForExit(1000)) {
-        Update-Heartbeat 'busy'
-        if ($sw.Elapsed.TotalSeconds -ge $timeout) { $timedOut = $true; Stop-Tree $proc.Id; break }
+    $proc = $null
+    try {
+        $proc = [System.Diagnostics.Process]::Start($psi)
+        $proc.StandardInput.Close()
+        $outT = $proc.StandardOutput.ReadToEndAsync(); $errT = $proc.StandardError.ReadToEndAsync()
+        $timedOut = $false
+        while (-not $proc.WaitForExit(1000)) {
+            Update-Heartbeat 'busy'
+            if ($sw.Elapsed.TotalSeconds -ge $timeout) { $timedOut = $true; Stop-Tree $proc.Id; break }
+        }
+        $proc.WaitForExit(5000) | Out-Null
+        [void]$outT.Wait(5000); [void]$errT.Wait(5000)
+        $o = Limit $outT.Result $max; $e = Limit $errT.Result $max
+        $code = $null; if ($proc.HasExited) { $code = $proc.ExitCode }
+        return [ordered]@{ exitCode = $code; timedOut = $timedOut; durationMs = $sw.ElapsedMilliseconds
+            stdout = $o[0]; stderr = $e[0]; truncated = ($o[1] -or $e[1]) }
+    } finally {
+        # release the process handle and its pipes now instead of whenever the finalizer runs
+        if ($proc) { $proc.Dispose() }
+        Remove-Item -LiteralPath $s.path -Force -ErrorAction SilentlyContinue
     }
-    $proc.WaitForExit(5000) | Out-Null
-    [void]$outT.Wait(5000); [void]$errT.Wait(5000)
-    $o = Limit $outT.Result $max; $e = Limit $errT.Result $max
-    Remove-Item -LiteralPath $s.path -Force -ErrorAction SilentlyContinue
-    $code = $null; if ($proc.HasExited) { $code = $proc.ExitCode }
-    return [ordered]@{ exitCode = $code; timedOut = $timedOut; durationMs = $sw.ElapsedMilliseconds
-        stdout = $o[0]; stderr = $e[0]; truncated = ($o[1] -or $e[1]) }
 }
 
 $script:Jobs = @{}
@@ -220,8 +226,26 @@ function Start-Job2($p, [string]$id) {
     $proc = Start-Process -FilePath $s.file -ArgumentList $s.args -WorkingDirectory $cwd -WindowStyle Hidden `
         -RedirectStandardOutput $out -RedirectStandardError $err -PassThru
     $null = $proc.Handle  # cache handle so ExitCode is readable later
-    $script:Jobs[$id] = @{ proc = $proc; out = $out; err = $err; script = $s.path; command = $cmd; started = (Get-Date).ToString('o') }
+    $script:Jobs[$id] = @{ proc = $proc; pid = $proc.Id; out = $out; err = $err; script = $s.path; command = $cmd; started = (Get-Date).ToString('o') }
+    Update-Jobs
     return [ordered]@{ jobId = $id; pid = $proc.Id; stdoutFile = $out; stderrFile = $err }
+}
+
+# Finished jobs keep only their exit code and file paths: the Process object (handle, wait
+# thread) and the temp script go as soon as the job is seen to have exited. Only the newest
+# $MaxFinishedJobs finished entries are remembered; their output files stay in jobs\.
+$MaxFinishedJobs = 100
+function Update-Jobs {
+    foreach ($k in @($script:Jobs.Keys)) {
+        $j = $script:Jobs[$k]
+        if ($j.proc -and $j.proc.HasExited) {
+            $j.exitCode = $j.proc.ExitCode; $j.ended = (Get-Date).ToString('o')
+            $j.proc.Dispose(); $j.proc = $null
+            Remove-Item -LiteralPath $j.script -Force -ErrorAction SilentlyContinue
+        }
+    }
+    $done = @($script:Jobs.Keys | Where-Object { -not $script:Jobs[$_].proc } | Sort-Object { $script:Jobs[$_].ended })
+    for ($i = 0; $i -lt $done.Count - $MaxFinishedJobs; $i++) { $script:Jobs.Remove($done[$i]) }
 }
 
 function Read-Tail([string]$path, [int]$max) {
@@ -236,14 +260,15 @@ function Read-Tail([string]$path, [int]$max) {
 function Get-Job2($p) {
     $max = [int](P $p 'maxChars' 20000)
     $jid = P $p 'id'
+    Update-Jobs
     $ids = if ($jid) { @($jid) } else { @($script:Jobs.Keys) }
     $res = @()
     foreach ($k in $ids) {
         $j = $script:Jobs[$k]
-        if (-not $j) { throw "Unknown job '$k'" }
-        $done = $j.proc.HasExited
-        $r = [ordered]@{ jobId = $k; pid = $j.proc.Id; running = (-not $done); command = $j.command; started = $j.started }
-        if ($done) { $r.exitCode = $j.proc.ExitCode }
+        if (-not $j) { throw "Unknown job '$k' (finished jobs beyond the newest $MaxFinishedJobs are forgotten; output stays in jobs\$k.out.txt)" }
+        $done = -not $j.proc
+        $r = [ordered]@{ jobId = $k; pid = $j.pid; running = (-not $done); command = $j.command; started = $j.started }
+        if ($done) { $r.exitCode = $j.exitCode; $r.ended = $j.ended }
         if ($jid) { $r.stdout = Read-Tail $j.out $max; $r.stderr = Read-Tail $j.err $max }
         $res += $r
     }
@@ -254,7 +279,8 @@ function Get-Job2($p) {
 function Stop-Job2($p) {
     $jid = Need $p 'id'; $j = $script:Jobs[$jid]
     if (-not $j) { throw "Unknown job '$jid'" }
-    if (-not $j.proc.HasExited) { Stop-Tree $j.proc.Id }
+    if ($j.proc -and -not $j.proc.HasExited) { Stop-Tree $j.pid; [void]$j.proc.WaitForExit(3000) }
+    Update-Jobs
     return @{ jobId = $jid; stopped = $true }
 }
 
@@ -746,11 +772,13 @@ function Invoke-Action($req) {
             if (P $p 'cwd') { $sp.WorkingDirectory = [string]$p.cwd }
             if (B (P $p 'admin' $false)) { $sp.Verb = 'RunAs' }
             $pr = Start-Process @sp
-            if (B (P $p 'waitWindow' $false)) {
-                $sw = [Diagnostics.Stopwatch]::StartNew()
-                while ($sw.Elapsed.TotalSeconds -lt [double](P $p 'timeout' 20)) { $pr.Refresh(); if ($pr.MainWindowHandle -ne [IntPtr]::Zero) { break }; Start-Sleep -Milliseconds 200 }
-            }
-            return @{ pid = $pr.Id; name = $pr.ProcessName }
+            try {
+                if (B (P $p 'waitWindow' $false)) {
+                    $sw = [Diagnostics.Stopwatch]::StartNew()
+                    while ($sw.Elapsed.TotalSeconds -lt [double](P $p 'timeout' 20)) { $pr.Refresh(); if ($pr.MainWindowHandle -ne [IntPtr]::Zero) { break }; Start-Sleep -Milliseconds 200 }
+                }
+                return @{ pid = $pr.Id; name = $(try { $pr.ProcessName } catch { $null }) }
+            } finally { if ($pr) { $pr.Dispose() } }
         }
         'screen' { return (Get-ScreenInfo) }
         'screenshot' {
@@ -850,6 +878,26 @@ function Invoke-Action($req) {
     }
 }
 
+# ---------------------------------------------------------------- memory
+# The agent and its launcher live as long as the sandbox. After a burst of requests (screenshots,
+# UI trees, big exec output) the .NET heap keeps its high-water mark and the pages stay resident,
+# so once the agent has been idle for a moment: drop finished jobs' handles, run a full GC that
+# also compacts the large-object heap, and hand the resident pages of the agent and the launcher
+# back to Windows. Also runs every $TrimEverySec while idle, for the heartbeat's small garbage.
+$TrimIdleSec = 3; $TrimEverySec = 600
+$script:Dirty = $true; $script:LastWork = [DateTime]::UtcNow; $script:LastTrim = [DateTime]::UtcNow
+$script:LauncherPid = $null
+try { $lp = (Get-CimInstance Win32_Process -Filter "ProcessId = $PID" -Property ParentProcessId).ParentProcessId
+      if ((Get-Process -Id $lp -ErrorAction SilentlyContinue).ProcessName -eq 'powershell') { $script:LauncherPid = [int]$lp } } catch {}
+function Invoke-Trim {
+    try { Update-Jobs } catch {}
+    [Runtime.GCSettings]::LargeObjectHeapCompactionMode = [Runtime.GCLargeObjectHeapCompactionMode]::CompactOnce
+    [GC]::Collect(); [GC]::WaitForPendingFinalizers(); [GC]::Collect()
+    try { [void][SbxNative]::TrimWorkingSet(0) } catch {}
+    if ($script:LauncherPid) { try { [void][SbxNative]::TrimWorkingSet($script:LauncherPid) } catch {} }
+    $script:Dirty = $false; $script:LastTrim = [DateTime]::UtcNow
+}
+
 # ---------------------------------------------------------------- main loop
 Log "agent $AgentVersion started pid=$PID user=$env:USERNAME bridge=$Bridge elevated=$script:IsElevated"
 Update-Heartbeat 'idle' -Force
@@ -865,10 +913,15 @@ $watcher.EnableRaisingEvents = $true
 while ($true) {
     Update-Heartbeat 'idle'
     $files = @(Get-ChildItem -LiteralPath $Dirs.inbox -Filter '*.json' -ErrorAction SilentlyContinue | Sort-Object Name)
-    if ($files.Count -eq 0) { [void]$watcher.WaitForChanged([IO.WatcherChangeTypes]'Created, Renamed, Changed', 500); continue }
+    if ($files.Count -eq 0) {
+        $now = [DateTime]::UtcNow
+        if (($script:Dirty -and ($now - $script:LastWork).TotalSeconds -ge $TrimIdleSec) -or ($now - $script:LastTrim).TotalSeconds -ge $TrimEverySec) { Invoke-Trim }
+        [void]$watcher.WaitForChanged([IO.WatcherChangeTypes]'Created, Renamed, Changed', 500); continue
+    }
     foreach ($f in $files) {
         $work = "$($f.FullName).work"
         try { Move-Item -LiteralPath $f.FullName -Destination $work -ErrorAction Stop } catch { continue }  # still being written / taken
+        $script:Dirty = $true; $script:LastWork = [DateTime]::UtcNow
         $req = $null; $id = [IO.Path]::GetFileNameWithoutExtension($f.Name)
         $sw = [Diagnostics.Stopwatch]::StartNew()
         $resp = [ordered]@{ id = $id; ok = $false }
@@ -887,6 +940,7 @@ while ($true) {
         $resp.ms = $sw.ElapsedMilliseconds
         try { Write-JsonFile (Join-Path $Dirs.outbox "$id.json") $resp } catch { Log "WRITE FAIL $id $($_.Exception.Message)" }
         Remove-Item -LiteralPath $work -Force -ErrorAction SilentlyContinue
+        $script:LastWork = [DateTime]::UtcNow
         if ($script:PendingReboot) {
             Log 'uac policy change: rebooting'
             Update-Heartbeat 'stopped' -Force
